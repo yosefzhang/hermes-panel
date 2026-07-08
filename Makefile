@@ -1,0 +1,50 @@
+.PHONY: install dev dev-backend dev-frontend build test lint clean stop
+
+install:
+	python3 -m venv .venv
+	. .venv/bin/activate && pip install -e ".[dev]"
+	cd frontend && npm install
+
+dev:
+	@echo "Starting backend on :8650 and frontend on :5173..."
+	@trap 'kill 0' EXIT; \
+	(. .venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port 8650 --reload) & \
+	(cd frontend && npm run dev) & \
+	wait
+
+dev-backend:
+	. .venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port 8650 --reload
+
+dev-frontend:
+	cd frontend && npm run dev
+
+build:
+	cd frontend && npm run build
+
+test:
+	. .venv/bin/activate && pytest backend/tests -v
+
+lint:
+	. .venv/bin/activate && ruff check backend/
+	cd frontend && npx tsc --noEmit
+
+clean:
+	rm -rf frontend/dist frontend/node_modules/.vite
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+stop:
+	@echo "Stopping Hermes Panel processes on ports 8650 and 5173..."
+	@for port in 8650 5173; do \
+		pids=$$(lsof -ti tcp:$$port 2>/dev/null || fuser -n tcp $$port 2>/dev/null || true); \
+		if [ -n "$$pids" ]; then \
+			echo "Stopping process(es) on :$$port -> $$pids"; \
+			fuser -k -TERM -n tcp $$port >/dev/null 2>&1 || kill $$pids 2>/dev/null || true; \
+			if fuser -n tcp $$port >/dev/null 2>&1; then \
+				echo "Force killing remaining process(es) on :$$port"; \
+				fuser -k -KILL -n tcp $$port >/dev/null 2>&1 || true; \
+			fi; \
+		else \
+			echo "No process is listening on :$$port"; \
+		fi; \
+	done
