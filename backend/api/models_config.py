@@ -203,32 +203,20 @@ def _collect_providers_from_config_and_env(
             if pname and pname not in NON_LLM_PROVIDERS and pname not in env_providers:
                 env_providers[pname] = env_key
 
-    # 构建结果
+    # 构建结果 — custom_providers 是 provider 列表，model.provider 标记当前激活
     seen: set[str] = set()
     result: list[dict[str, Any]] = []
 
-    # 主 provider
-    if main_provider_name:
-        main_override = custom_by_name.get(main_provider_name, {})
-        main_key_env = str(main_override.get("key_env", "") or "")
-        main_inline_key = bool(main_override.get("api_key"))
-        seen.add(main_provider_name)
-        result.append({
-            "name": main_provider_name,
-            "source": "main",
-            "base_url": str(main_override.get("base_url") or main_base_url or herm_providers.get(main_provider_name, "")),
-            "api_mode": str(main_override.get("api_mode") or ""),
-            "key_env": main_key_env or next((k for k, v in env_vars.items()
-                            if (k.upper().startswith(main_provider_name.upper() + "_") or 
-                                main_provider_name.upper() in k.upper()) and 
-                            "KEY" in k.upper() and bool(v)), ""),
-            "has_key": bool(env_vars.get(main_key_env)) if main_key_env else (
-                main_inline_key or any((k.upper().startswith(main_provider_name.upper() + "_") or 
-                                        main_provider_name.upper() in k.upper()) and bool(v) for k, v in env_vars.items())
-            ),
-        })
+    # Resolve the active provider name from model.provider
+    active_provider_name = main_provider_name
+    # When model.provider == "custom", match by base_url to find the actual custom_providers entry
+    if active_provider_name == "custom" and main_base_url:
+        for cp in custom_list:
+            if isinstance(cp, dict) and str(cp.get("base_url", "")).rstrip("/") == main_base_url.rstrip("/"):
+                active_provider_name = str(cp.get("name", "custom"))
+                break
 
-    # 自定义 provider
+    # 自定义 provider（来自 custom_providers）
     for cp in custom_list:
         if not isinstance(cp, dict):
             continue
@@ -237,6 +225,7 @@ def _collect_providers_from_config_and_env(
             continue
         seen.add(cname)
         key_env = cp.get("key_env", "") or ""
+        is_active = (cname == active_provider_name)
         result.append({
             "name": cname,
             "source": "custom",
@@ -244,6 +233,7 @@ def _collect_providers_from_config_and_env(
             "api_mode": str(cp.get("api_mode") or ""),
             "key_env": key_env,
             "has_key": bool(env_vars.get(key_env)) if key_env else bool(cp.get("api_key")),
+            "is_active": is_active,
         })
 
     # 仅 .env 中发现的 provider（只显示有已知 base_url 的）
@@ -251,7 +241,7 @@ def _collect_providers_from_config_and_env(
         if pname not in seen:
             base_url = herm_providers.get(pname, "")
             if not base_url:
-                continue  # 无已知 base_url 就不算 LLM provider
+                continue
             seen.add(pname)
             result.append({
                 "name": pname,
@@ -260,6 +250,7 @@ def _collect_providers_from_config_and_env(
                 "api_mode": "",
                 "key_env": env_key,
                 "has_key": True,
+                "is_active": (pname == active_provider_name),
             })
 
     return result
@@ -580,10 +571,12 @@ def get_provider_models(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    proxies = {
-        "http": "http://10.0.0.10:9132",
-        "https": "http://10.0.0.10:9132",
-    }
+    import os as _os
+    proxies = None
+    _http_proxy = _os.environ.get("HTTP_PROXY") or _os.environ.get("http_proxy")
+    _https_proxy = _os.environ.get("HTTPS_PROXY") or _os.environ.get("https_proxy")
+    if _http_proxy or _https_proxy:
+        proxies = {"http": _http_proxy, "https": _https_proxy}
 
     import requests as req_lib
     from requests.exceptions import RequestException
@@ -708,11 +701,12 @@ def test_custom_provider_connection(
         "Content-Type": "application/json",
     }
 
-    # 代理配置 (NAS 环境)
-    proxies = {
-        "http": "http://10.0.0.10:9132",
-        "https": "http://10.0.0.10:9132",
-    }
+    import os as _os
+    proxies = None
+    _http_proxy = _os.environ.get("HTTP_PROXY") or _os.environ.get("http_proxy")
+    _https_proxy = _os.environ.get("HTTPS_PROXY") or _os.environ.get("https_proxy")
+    if _http_proxy or _https_proxy:
+        proxies = {"http": _http_proxy, "https": _https_proxy}
 
     import requests as req_lib
     from requests.exceptions import RequestException

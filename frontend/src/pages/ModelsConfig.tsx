@@ -53,9 +53,15 @@ interface ModelsData {
 // ── Helpers ────────────────────────────────────────────
 
 const AUX_LABELS: Record<string, string> = {
-  vision: 'Vision', web_extract: 'Web Extract', compression: 'Compression',
-  skills_hub: 'Skills Hub', approval: 'Approval', mcp: 'MCP',
-  title_generation: 'Title Generation', tts_audio_tags: 'TTS Audio Tags',
+  vision: '视觉分析',
+  compression: '上下文压缩',
+  web_extract: '网页提取',
+  approval: '命令审批',
+  mcp: 'MCP 管理',
+  skills_hub: '技能中心',
+  title_generation: '标题生成',
+  tts_audio_tags: 'TTS 标签',
+  curator: '后台维护',
 };
 
 
@@ -671,10 +677,18 @@ function AuxTab({ data, activeProfile, onReload }: { data: Record<string, any>; 
     finally { setSaving(false); }
   };
 
-  const rows = Object.entries(data ?? {}).map(([name, cfg]: [string, any]) => ({ name, ...cfg }));
-  const submoduleOptions = rows.map((row) => ({ label: AUX_LABELS[row.name] || row.name, value: row.name }));
+  // Merge known tasks with actual config: show all tasks, real config wins
+  const rows = Object.entries(AUX_LABELS).map(([name, label]) => ({
+    name,
+    label,
+    ...(data?.[name] || {}),
+  }));
+  // Always show all known auxiliary modules in the selector, not just existing rows
+  const submoduleOptions = Object.entries(AUX_LABELS).map(([value, label]) => ({ label, value }));
+  // Default to first available submodule when no config exists
+  const defaultSubmodule = rows[0]?.name || Object.keys(data ?? {})[0] || Object.keys(AUX_LABELS)[0] || '';
+  const hasExisting = rows.some((r: any) => r.provider);
   const providerOptions = providers.map((p) => ({
-    label: p.name,
     value: p.source === 'custom' ? `custom:${p.name}` : p.name,
   }));
   const watchedProvider = Form.useWatch('provider', form);
@@ -685,7 +699,7 @@ function AuxTab({ data, activeProfile, onReload }: { data: Record<string, any>; 
     <>
       <Card
         title="辅助模型"
-        extra={<Button onClick={() => openEditor(rows[0]?.name || Object.keys(data ?? {})[0] || '')} disabled={!rows.length}>编辑</Button>}
+        extra={<Button onClick={() => openEditor(defaultSubmodule)}>{hasExisting ? '编辑' : '添加'}</Button>}
       >
         <Table
           rowKey="name"
@@ -695,7 +709,7 @@ function AuxTab({ data, activeProfile, onReload }: { data: Record<string, any>; 
           bordered
           locale={{ emptyText: '暂无辅助模型配置' }}
           columns={[
-            { title: '子模块', dataIndex: 'name', width: '20%', minWidth: 100, render: (v: string) => <Text>{AUX_LABELS[v] || v}</Text> },
+            { title: '子模块', dataIndex: 'name', width: '20%', minWidth: 100, render: (_v: string, record: any) => <Text>{record.label || _v}</Text> },
             { title: 'Provider', dataIndex: 'provider', width: '20%', minWidth: 100, render: (v: string) => <Text>{v || '—'}</Text> },
             { title: 'Model', dataIndex: 'model', width: '45%', minWidth: 140, ellipsis: true, render: (v: string) => <Text>{v || '—'}</Text> },
             { title: '超时(秒)', dataIndex: 'timeout', width: '15%', minWidth: 80, render: (v: string | number) => <Text>{v ?? '—'}</Text> },
