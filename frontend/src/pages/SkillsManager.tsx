@@ -1,74 +1,44 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Alert, Card, Col, Collapse, Input, Row, Space,
-  Switch, Tabs, Tag, Typography, App as AntApp, Tooltip,
-} from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import PageHeader from '../components/PageHeader';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { AlertCircle, ChevronDown, Search, Puzzle } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { apiClient } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useConfigStore } from '../store/configStore';
+import PageHeader from '../components/PageHeader';
+import PageContainer from '../components/PageContainer';
+import Loading from '../components/Loading';
+import ErrorAlert from '../components/ErrorAlert';
 import type { SkillRecord, SkillsResponse } from '../types';
 
-const { Text } = Typography;
-
 // ── Origin 分类元数据 ─────────────────────────────
-// origin 是"作者身份 × source"派生出来的语义标签，比原始 source 更贴近用户视角
-type OriginMeta = { label: string; color: string; hint: string };
+type OriginMeta = { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; hint: string };
 
 const ORIGIN_META: Record<string, OriginMeta> = {
-  agent_created: { label: 'Agent 创建', color: 'geekblue', hint: 'Hermes Agent 在本地为你自动创建的 skill' },
-  agent_modified: { label: 'Agent 修改', color: 'gold', hint: 'Agent 修改过官方内置 skill（可用 hermes skills diff 查看）' },
-  user: { label: '我创建', color: 'green', hint: '你亲自撰写的 skill（frontmatter author=Yosef/Yosephine）' },
-  community: { label: '社区/第三方', color: 'magenta', hint: '来自 Skill Hub、外部目录或第三方作者' },
-  official: { label: '官方内置', color: 'blue', hint: '随 hermes-agent 发行的官方 skill，未被修改' },
-  unknown: { label: '未分类', color: 'default', hint: '无法识别来源' },
+  agent_created: { label: 'Agent 创建', variant: 'default', hint: 'Hermes Agent 在本地为你自动创建的 skill' },
+  agent_modified: { label: 'Agent 修改', variant: 'default', hint: 'Agent 修改过官方内置 skill（可用 hermes skills diff 查看）' },
+  user: { label: '我创建', variant: 'default', hint: '你亲自撰写的 skill（frontmatter author=Yosef/Yosephine）' },
+  community: { label: '社区/第三方', variant: 'secondary', hint: '来自 Skill Hub、外部目录或第三方作者' },
+  official: { label: '官方内置', variant: 'outline', hint: '随 hermes-agent 发行的官方 skill，未被修改' },
+  unknown: { label: '未分类', variant: 'secondary', hint: '无法识别来源' },
 };
 
 const ORIGIN_ORDER = ['agent_created', 'agent_modified', 'user', 'community', 'official', 'unknown'];
 
-// ── Source 颜色映射（作为附加信息保留） ────────────
-const SOURCE_COLORS: Record<string, string> = {
-  builtin: 'blue',
-  hub: 'purple',
-  local: 'green',
-  external: 'orange',
-  modified: 'gold',
-  'skills.sh': 'magenta',
-};
-
 const ALL_KEY = '__all__';
-
-function sourceColor(source: string): string {
-  return SOURCE_COLORS[source] || 'default';
-}
 
 function getOriginMeta(origin: string | undefined): OriginMeta {
   return ORIGIN_META[origin || 'unknown'] || ORIGIN_META.unknown;
 }
 
-// ── Origin Tag（主分类，语义化标签） ───────────────
-
-function OriginTag({ origin }: { origin: string | undefined }) {
-  const meta = getOriginMeta(origin);
-  return (
-    <Tooltip title={meta.hint}>
-      <Tag color={meta.color} style={{ margin: 0 }}>
-        {meta.label}
-      </Tag>
-    </Tooltip>
-  );
-}
-
-// ── Source Tag（保留作为技术侧信息） ───────────────
-
-function SourceTag({ source }: { source: string }) {
-  if (!source) return null;
-  return <Tag color={sourceColor(source)}>{source}</Tag>;
-}
-
 // ── 右侧 SKILL.md 详情面板 ─────────────────────────
-
 function SkillDetailPanel({ skill }: { skill: SkillRecord | null }) {
   const { activeProfile } = useConfigStore();
   const [detail, setDetail] = useState<{
@@ -99,61 +69,67 @@ function SkillDetailPanel({ skill }: { skill: SkillRecord | null }) {
 
   if (!skill) {
     return (
-      <Card style={{ height: '100%' }} styles={{ body: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' } }}>
-        <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>
-          选择一个 Skill 查看 SKILL.md 内容
-        </div>
+      <Card className="h-full">
+        <CardContent className="flex items-center justify-center h-full">
+          <div className="text-center p-12 text-muted-foreground">
+            选择一个 Skill 查看 SKILL.md 内容
+          </div>
+        </CardContent>
       </Card>
     );
   }
 
+  const originMeta = getOriginMeta(skill.origin);
+
   return (
-    <Card
-      title={
-        <Space wrap>
-          <Text strong>{skill.name}</Text>
-          <OriginTag origin={skill.origin} />
-          <SourceTag source={skill.source} />
+    <Card className="h-full flex flex-col">
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>{skill.name}</CardTitle>
+          <Badge variant={originMeta.variant} title={originMeta.hint}>
+            {originMeta.label}
+          </Badge>
+          {skill.source && (
+            <Badge variant="outline">{skill.source}</Badge>
+          )}
           {skill.category && skill.category !== '未分类' && (
-            <Tag color="cyan">{skill.category}</Tag>
+            <Badge variant="secondary">{skill.category}</Badge>
           )}
-          {skill.enabled ? (
-            <Tag color="success">已启用</Tag>
-          ) : (
-            <Tag color="error">已停用</Tag>
-          )}
-        </Space>
-      }
-      style={{ height: '100%' }}
-      styles={{ body: { height: 'calc(100% - 58px)', overflow: 'auto' } }}
-    >
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>加载中...</div>
-      ) : detail ? (
-        <>
-          {detail.frontmatter?.author && (
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
-              作者：{detail.frontmatter.author}
-            </Text>
-          )}
-          <div className="markdown-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
-            <ReactMarkdown>{detail.body || '*（该 SKILL.md 无正文内容）*'}</ReactMarkdown>
-          </div>
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 16, wordBreak: 'break-all' }}>
-            路径: {detail.path}
-          </Text>
-        </>
-      ) : (
-        <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
-          无法读取该 Skill 的 SKILL.md 内容
+          <Badge variant={skill.enabled ? 'default' : 'outline'} className={skill.enabled ? '' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-transparent'}>
+            {skill.enabled ? '已启用' : '未启用'}
+          </Badge>
         </div>
-      )}
+      </CardHeader>
+      <ScrollArea className="flex-1">
+        <CardContent>
+          {loading ? (
+            <div className="text-center p-12 text-muted-foreground">加载中...</div>
+          ) : detail ? (
+            <>
+              {detail.frontmatter?.author && (
+                <p className="text-sm text-muted-foreground mb-4">
+                  作者：{detail.frontmatter.author}
+                </p>
+              )}
+              <div className="prose prose-sm dark:prose-invert max-w-none">
+                <ReactMarkdown>{detail.body || '*（该 SKILL.md 无正文内容）*'}</ReactMarkdown>
+              </div>
+              <p className="text-xs text-muted-foreground mt-6 break-all">
+                路径: {detail.path}
+              </p>
+            </>
+          ) : (
+            <div className="text-center p-12 text-muted-foreground">
+              无法读取该 Skill 的 SKILL.md 内容
+            </div>
+          )}
+        </CardContent>
+      </ScrollArea>
     </Card>
   );
 }
 
 // ── 左侧列表项 ─────────────────────────────────────
-
 interface SkillListItemProps {
   skill: SkillRecord;
   selected: boolean;
@@ -168,54 +144,40 @@ function SkillListItem({
   return (
     <div
       onClick={() => onSelect(skill)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '6px 8px',
-        borderRadius: 6,
-        cursor: 'pointer',
-        background: selected ? '#e6f4ff' : 'transparent',
-        border: selected ? '1px solid #91caff' : '1px solid transparent',
-        transition: 'all 0.2s',
-      }}
-      onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.background = '#fafafa'; }}
-      onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+      className={`flex items-start gap-2 p-2 rounded-md cursor-pointer transition-colors ${
+        selected
+          ? 'bg-primary/10 border border-primary/20'
+          : 'hover:bg-accent border border-transparent'
+      }`}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Text strong ellipsis={{ tooltip: skill.name }} style={{ fontSize: 13 }}>
-          {skill.name}
-        </Text>
+      <div className="flex-1 min-w-0 w-full max-w-full">
+        <p className="text-sm font-medium truncate">{skill.name}</p>
         {skill.description && (
-          <Text type="secondary" ellipsis style={{ display: 'block', fontSize: 11, lineHeight: 1.4 }}>
+          <p className="text-xs leading-5 text-muted-foreground whitespace-normal break-words max-w-full">
             {skill.description}
-          </Text>
+          </p>
         )}
       </div>
-      <Space size={2} onClick={(e) => e.stopPropagation()}>
+      <div onClick={(e) => e.stopPropagation()}>
         <Switch
-          size="small"
           checked={skill.enabled}
-          loading={actionLoading === `toggle:${skill.name}`}
-          onChange={(checked) => onToggle(skill.name, checked)}
+          disabled={actionLoading === `toggle:${skill.name}`}
+          onCheckedChange={(checked) => onToggle(skill.name, checked)}
         />
-      </Space>
+      </div>
     </div>
   );
 }
 
 // ── 主页面 ─────────────────────────────────────────
-
 export default function SkillsManager() {
-  const { message } = AntApp.useApp();
+  const { toast } = useToast();
   const { activeProfile } = useConfigStore();
 
   const [search, setSearch] = useState('');
   const [activeOrigin, setActiveOrigin] = useState<string>(ALL_KEY);
   const [selectedSkill, setSelectedSkill] = useState<SkillRecord | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const panesWrapRef = useRef<HTMLDivElement | null>(null);
-  const [panesHeight, setPanesHeight] = useState<number>(560);
 
   const fetchSkills = useCallback(
     () => apiClient.get<SkillsResponse>('/skills', { params: { profile: activeProfile } }).then((res) => res.data.skills),
@@ -224,7 +186,7 @@ export default function SkillsManager() {
 
   const { data: skills, loading, error, execute: reload } = useApi(fetchSkills, [activeProfile]);
 
-  // 计算每个 origin 的数量（用于 Tab 上的角标）
+  // 计算每个 origin 的数量
   const originCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const s of skills ?? []) {
@@ -277,130 +239,127 @@ export default function SkillsManager() {
     setActionLoading(`toggle:${name}`);
     try {
       await apiClient.post(`/skills/${name}/toggle`, { enabled }, { params: { profile: activeProfile } });
-      message.success(enabled ? '已启用' : '已停用');
+      toast({
+        title: '成功',
+        description: enabled ? '已启用' : '已停用',
+      });
       reload();
     } catch {
-      message.error('操作失败');
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '操作失败',
+      });
     } finally {
       setActionLoading(null);
     }
   };
 
-  useEffect(() => {
-    const updatePanesHeight = () => {
-      const el = panesWrapRef.current;
-      if (!el) return;
-      const top = el.getBoundingClientRect().top;
-      const next = Math.max(360, Math.floor(window.innerHeight - top - 12));
-      setPanesHeight(next);
-    };
-    updatePanesHeight();
-    window.addEventListener('resize', updatePanesHeight);
-    return () => window.removeEventListener('resize', updatePanesHeight);
-  }, []);
-
-  const tabItems = useMemo(() => {
-    const items: { key: string; label: React.ReactNode }[] = [
-      { key: ALL_KEY, label: <span>全部</span> },
-    ];
-    for (const origin of availableOrigins) {
-      const meta = ORIGIN_META[origin];
-      items.push({
-        key: origin,
-        label: (
-          <Tooltip title={meta.hint}>
-            <span>{meta.label}</span>
-          </Tooltip>
-        ),
-      });
-    }
-    return items;
-  }, [availableOrigins]);
-
   return (
-    <>
+    <PageContainer>
       <PageHeader
-        title="Skills"
-        profile={activeProfile}
-        profileName="通过 hermes skills list 管理技能"
         extra={
-          <Input
-            placeholder="搜索 Skill 名称、描述或分类..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            allowClear
-            style={{ width: 320 }}
-          />
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="搜索 Skill 名称、描述或分类..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 w-[320px]"
+            />
+          </div>
         }
       />
 
-      {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 16 }} />}
+      {/* Error message */}
+      {error && <ErrorAlert message={error} />}
 
-      {/* 横向 source 导航栏 */}
-      <Tabs
-        activeKey={activeOrigin}
-        onChange={setActiveOrigin}
-        type="card"
-        items={tabItems}
-        style={{ marginBottom: 16 }}
-      />
-
-      {/* 左右两栏 */}
-      <div ref={panesWrapRef} style={{ height: `${panesHeight}px` }}>
-        <Row gutter={16} style={{ height: '100%' }}>
-          <Col span={7} style={{ height: '100%' }}>
-            <Card
-              size="small"
-              title={`${filtered.length} 个 Skill`}
-              loading={loading}
-              style={{ height: '100%' }}
-              styles={{ body: { padding: 8, height: 'calc(100% - 46px)', overflow: 'auto' } }}
+      {/* Origin tabs */}
+      <div className="flex gap-2 border-b">
+        <button
+          onClick={() => setActiveOrigin(ALL_KEY)}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            activeOrigin === ALL_KEY
+              ? 'tab-active'
+              : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-card/60'
+          }`}
+        >
+          全部
+        </button>
+        {availableOrigins.map((origin) => {
+          const meta = ORIGIN_META[origin];
+          return (
+            <button
+              key={origin}
+              onClick={() => setActiveOrigin(origin)}
+              title={meta.hint}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeOrigin === origin
+                  ? 'tab-active'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-card/60'
+              }`}
             >
-              {grouped.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 32, color: '#999' }}>
+              {meta.label} ({originCounts[origin]})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Two-column layout */}
+      <div className="grid grid-cols-12 gap-4 h-[calc(100vh-280px)] min-h-[360px]">
+        {/* Left: Skills list */}
+        <Card className="col-span-5 flex flex-col">
+          <CardHeader>
+            <CardTitle>{filtered.length} 个 Skill</CardTitle>
+          </CardHeader>
+          <ScrollArea className="flex-1">
+            <CardContent>
+              {loading ? (
+                <Loading className="py-12" />
+              ) : grouped.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
                   {search || activeOrigin !== ALL_KEY ? '没有匹配的 Skill' : '暂无 Skill'}
                 </div>
               ) : (
-                <Collapse
-                  ghost
-                  defaultActiveKey={grouped.map(([cat]) => cat)}
-                  style={{ background: 'transparent' }}
-                  items={grouped.map(([category, items]) => ({
-                    key: category,
-                    label: (
-                      <Space>
-                        <Text strong style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                <div className="space-y-2">
+                  {grouped.map(([category, items]) => (
+                    <Collapsible key={category} defaultOpen>
+                      <CollapsibleTrigger className="flex items-center gap-2 w-full p-2 text-left hover:bg-accent rounded-md">
+                        <ChevronDown className="h-4 w-4 transition-transform data-[state=open]:rotate-0 data-[state=closed]:-rotate-90" />
+                        <span className="text-xs font-semibold uppercase tracking-wide">
                           {category}
-                        </Text>
-                        <Tag style={{ fontSize: 10, lineHeight: '16px' }}>{items.length}</Tag>
-                      </Space>
-                    ),
-                    children: (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {items.map((skill) => (
-                          <SkillListItem
-                            key={skill.path || `${skill.source}:${skill.name}`}
-                            skill={skill}
-                            selected={selectedSkill?.name === skill.name}
-                            onSelect={setSelectedSkill}
-                            onToggle={handleToggle}
-                            actionLoading={actionLoading}
-                          />
-                        ))}
-                      </div>
-                    ),
-                    style: { borderBottom: 'none' },
-                  }))}
-                />
+                        </span>
+                        <Badge variant="outline" className="text-xs">
+                          {items.length}
+                        </Badge>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="space-y-1 mt-1">
+                          {items.map((skill) => (
+                            <SkillListItem
+                              key={skill.path || `${skill.source}:${skill.name}`}
+                              skill={skill}
+                              selected={selectedSkill?.name === skill.name}
+                              onSelect={setSelectedSkill}
+                              onToggle={handleToggle}
+                              actionLoading={actionLoading}
+                            />
+                          ))}
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  ))}
+                </div>
               )}
-            </Card>
-          </Col>
+            </CardContent>
+          </ScrollArea>
+        </Card>
 
-          <Col span={17} style={{ height: '100%' }}>
-            <SkillDetailPanel skill={selectedSkill} />
-          </Col>
-        </Row>
+        {/* Right: Detail panel */}
+        <div className="col-span-7">
+          <SkillDetailPanel skill={selectedSkill} />
+        </div>
       </div>
-    </>
+    </PageContainer>
   );
 }

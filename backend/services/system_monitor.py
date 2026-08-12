@@ -9,8 +9,8 @@ from backend.db.database import connect
 
 
 class SystemMonitor:
-    def __init__(self, control_db_path: str | Path):
-        self.control_db_path = Path(control_db_path)
+    def __init__(self, db_path: str | Path):
+        self.db_path = Path(db_path)
         self._last_net = None
 
     def current_stats(self) -> dict:
@@ -52,7 +52,7 @@ class SystemMonitor:
         return stats
 
     def record(self, stats: dict) -> None:
-        with connect(self.control_db_path) as connection:
+        with connect(self.db_path) as connection:
             connection.execute(
                 """
                 INSERT INTO system_metrics (
@@ -77,7 +77,7 @@ class SystemMonitor:
 
     def history(self, minutes: int = 60) -> list[dict]:
         cutoff = time.time() - minutes * 60
-        with connect(self.control_db_path) as connection:
+        with connect(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT timestamp, cpu_percent, memory_percent, disk_percent, net_bytes_sent, net_bytes_recv, load_avg_1m

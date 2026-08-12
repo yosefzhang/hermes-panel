@@ -1,79 +1,58 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, Descriptions, Modal, Row, Spin, Statistic, Table, Tag, Tooltip } from 'antd';
+import { useCallback, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import ReactMarkdown from 'react-markdown';
-import PageHeader from '../components/PageHeader';
-import EmptyState from '../components/EmptyState';
+import * as echarts from 'echarts';
+import {
+  Activity,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  BarChart3,
+  CheckCircle2,
+  Layers,
+  MessageSquare,
+  RefreshCw,
+  Server,
+  Target,
+  TrendingUp,
+  Zap,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '../hooks/useApi';
-import { apiClient } from '../api/client';
-import { useConfigStore } from '../store/configStore';
-import { useAuthStore } from '../store/authStore';
-import { getProfileColor } from '../config/profileColors';
-import type { TokenDashboardData, TokenDailyEntry, TokenModelEntry } from '../types';
+import { api } from '../api/client';
+import PageHeader from '../components/PageHeader';
+import PageContainer from '../components/PageContainer';
+import Loading from '../components/Loading';
+import ErrorAlert from '../components/ErrorAlert';
 
-interface HermesHomeInfo {
-  path: string;
-  exists: boolean;
-}
-
-interface DbStats {
-  size: number;
-  size_formatted: string;
+interface ProfileStat {
+  id: number;
+  server_id: string;
+  host: string | null;
+  profile_name: string;
+  path: string | null;
+  gateway_status: string | null;
   session_count: number;
+  total_tokens: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  cache_hit_rate: number;
+  model_top5: Array<{ model: string; total_tokens: number; sessions: number }>;
+  provider_top5: Array<{ provider: string; total_tokens: number; sessions: number }>;
+  daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
+  updated_at: number;
 }
 
-interface ProfileInfo {
+interface ServerInfo {
+  id: string;
   name: string;
-  path: string;
-  exists: boolean;
-  config_exists: boolean;
-  env_exists: boolean;
-  state_db_exists: boolean;
-  skills_path: string;
-  skills_exists: boolean;
-  db_stats: DbStats | null;
+  host: string | null;
+  is_local: boolean;
+  online: boolean;
+  profiles: ProfileStat[];
 }
 
-interface DashboardInfo {
-  hermes_home: HermesHomeInfo;
-  profiles: ProfileInfo[];
-  versions: Record<string, string>;
-}
-
-interface HermesUpdateInfo {
-  current_version: string;
-  latest_version: string | null;
-  latest_version_tag: string;
-  has_update: boolean;
-  release_notes: string;
-  published_at: string;
-  release_url: string;
-  error?: string;
-}
-
-const versionLabels: Record<string, string> = {
-  python: 'Python',
-  node: 'Node.js',
-  npm: 'npm',
-  git: 'Git',
-  hermes: 'Hermes',
-};
-
-const badgeColors: Record<string, string> = {
-  python: '#3776ab',
-  node: '#339933',
-  npm: '#cb3837',
-  git: '#f05032',
-  hermes: '#0f766e',
-};
-
-function GitHubBadge({ label, version, color }: { label: string; version: string; color: string }) {
-  return (
-    <span style={{ display: 'inline-flex', borderRadius: 4, overflow: 'hidden', fontSize: 12, lineHeight: '20px', fontFamily: 'Verdana, sans-serif' }}>
-      <span style={{ padding: '0 6px', background: '#555', color: '#fff' }}>{label}</span>
-      <span style={{ padding: '0 6px', background: color, color: '#fff' }}>{version}</span>
-    </span>
-  );
+interface DashboardData {
+  servers: ServerInfo[];
 }
 
 function fmt(n: number | null | undefined): string {
@@ -83,620 +62,523 @@ function fmt(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
-function fmtCost(n: number | null | undefined): string {
-  if (n == null || n === 0) return '$0.00';
-  return '$' + n.toFixed(4);
+const CHART_COLORS = ['#3b82f6', '#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#94a3b8'];
+
+function useDashboardStats(data: DashboardData | null) {
+  return useMemo(() => {
+    const allProfiles = (data?.servers ?? []).flatMap((s) => s.profiles);
+
+    const hostCount = data?.servers.length ?? 0;
+    const profileCount = allProfiles.length;
+    const runningProfiles = allProfiles.filter((p) => p.gateway_status === 'running').length;
+    const totalTokens = allProfiles.reduce((sum, p) => sum + p.total_tokens, 0);
+    const totalInputTokens = allProfiles.reduce((sum, p) => sum + p.total_input_tokens, 0);
+    const totalOutputTokens = allProfiles.reduce((sum, p) => sum + p.total_output_tokens, 0);
+    const totalSessions = allProfiles.reduce((sum, p) => sum + p.session_count, 0);
+    const avgCacheHitRate =
+      profileCount > 0
+        ? allProfiles.reduce((sum, p) => sum + p.cache_hit_rate, 0) / profileCount
+        : 0;
+
+    const profileRank = [...allProfiles]
+      .sort((a, b) => b.total_tokens - a.total_tokens)
+      .slice(0, 10)
+      .map((p) => ({
+        name: p.profile_name,
+        value: p.total_tokens,
+      }));
+
+    const modelUsage: Record<string, number> = {};
+    for (const p of allProfiles) {
+      for (const m of p.model_top5 ?? []) {
+        modelUsage[m.model] = (modelUsage[m.model] ?? 0) + m.total_tokens;
+      }
+    }
+    const modelTop5 = Object.entries(modelUsage)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, value]) => ({ name, value }));
+
+    const today = new Date().toISOString().slice(0, 10);
+    const todayTop5 = [...allProfiles]
+      .map((p) => {
+        const found = p.daily_tokens?.find((d) => d.day === today);
+        return { name: p.profile_name, value: found?.total_tokens ?? 0 };
+      })
+      .filter((p) => p.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+
+    // Last 15 days token trend (aggregated across all profiles)
+    const days: string[] = [];
+    for (let i = 14; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().slice(0, 10));
+    }
+    const dailyTrend = days.map((day) => {
+      let total = 0;
+      let input = 0;
+      let output = 0;
+      for (const p of allProfiles) {
+        const found = p.daily_tokens?.find((d) => d.day === day);
+        if (found) {
+          total += found.total_tokens ?? 0;
+          input += found.input_tokens ?? 0;
+          output += found.output_tokens ?? 0;
+        }
+      }
+      return { day, total_tokens: total, input_tokens: input, output_tokens: output };
+    });
+
+    return {
+      hostCount,
+      profileCount,
+      runningProfiles,
+      totalTokens,
+      totalInputTokens,
+      totalOutputTokens,
+      totalSessions,
+      avgCacheHitRate,
+      profileRank,
+      modelTop5,
+      todayTop5,
+      dailyTrend,
+    };
+  }, [data]);
 }
 
-const CHART_COLORS = ['#0f766e', '#0891b2', '#d97706', '#dc2626', '#7c3aed', '#94a3b8'];
-
-function topFiveWithOther(models: TokenModelEntry[]): TokenModelEntry[] {
-  if (models.length <= 5) return models;
-  const top5 = models.slice(0, 5);
-  const otherTokens = models.slice(5).reduce((sum, m) => sum + m.total_tokens, 0);
-  return [...top5, { model: 'Other', total_tokens: otherTokens, sessions: 0 }];
+interface MetricItem {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  iconClass: string;
 }
 
-interface ProfileTokenData {
-  profile: string;
-  data: TokenDashboardData;
-}
-
-function ProfileTokenSection({ profile, data }: { profile: string; data: TokenDashboardData }) {
-  const summary = data.summary;
-  const daily = data.daily ?? [];
-  const byModel = data.by_model ?? [];
-
-  const last15Days = daily.slice(-15);
-
-  const dailyChartOption = useMemo(() => ({
-    tooltip: {
-      trigger: 'axis' as const,
-      formatter: (params: Array<{ name: string; value: number }>) => {
-        const p = params[0];
-        return `${p.name}<br/>${fmt(p.value)} tokens`;
-      },
-    },
-    grid: { left: 60, right: 16, top: 16, bottom: 40 },
-    xAxis: {
-      type: 'category' as const,
-      data: last15Days.map((d: TokenDailyEntry) => d.day),
-      axisLabel: { fontSize: 11, rotate: last15Days.length > 10 ? 45 : 0 },
-    },
-    yAxis: {
-      type: 'value' as const,
-      axisLabel: { formatter: (v: number) => fmt(v) },
-    },
-    series: [
-      {
-        type: 'bar',
-        data: last15Days.map((d: TokenDailyEntry) => d.total_tokens),
-        itemStyle: {
-          color: '#0f766e',
-          borderRadius: [4, 4, 0, 0] as unknown as number,
-        },
-        barMaxWidth: 30,
-      },
-    ],
-  }), [last15Days]);
-
-  const modelChartData = topFiveWithOther(byModel);
-
-  const modelChartOption = useMemo(() => ({
-    tooltip: {
-      trigger: 'item' as const,
-      formatter: (p: { name: string; value: number; percent: number }) =>
-        `${p.name}<br/>${fmt(p.value)} tokens (${p.percent.toFixed(1)}%)`,
-    },
-    legend: {
-      type: 'scroll' as const,
-      bottom: 0,
-      left: 'center',
-    },
-    series: [
-      {
-        type: 'pie',
-        radius: ['40%', '65%'],
-        avoidLabelOverlap: true,
-        itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-        label: { show: true, formatter: (p: { name: string; percent: number }) => `${p.name}\n${p.percent.toFixed(0)}%`, fontSize: 11 },
-        emphasis: { label: { show: true, fontSize: 13, fontWeight: 'bold' } },
-        data: modelChartData.map((m: TokenModelEntry, i: number) => ({
-          name: m.model,
-          value: m.total_tokens,
-          itemStyle: { color: CHART_COLORS[i % CHART_COLORS.length] },
-        })),
-      },
-    ],
-  }), [modelChartData]);
-
+function MetricCard({ metric }: { metric: MetricItem }) {
+  const { icon: Icon, label, value, iconClass } = metric;
   return (
-    <div style={{ marginBottom: 24 }}>
-      <Card
-        title={<span style={{ fontWeight: 600 }}>{profile}</span>}
-        size="small"
-        styles={{ header: { background: '#f0f7f6' } }}
-      >
-        <Row gutter={[12, 12]}>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="总 Token" value={fmt(summary.total_tokens)} valueStyle={{ color: '#0f766e', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="总输入" value={fmt(summary.total_input_tokens)} valueStyle={{ color: '#0891b2', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="总输出" value={fmt(summary.total_output_tokens)} valueStyle={{ color: '#d97706', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="缓存命中率" value={summary.cache_hit_rate} suffix="%" precision={1} valueStyle={{ color: '#7c3aed', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="会话数" value={summary.total_sessions} valueStyle={{ fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="估算费用" value={fmtCost(summary.total_cost_usd)} valueStyle={{ color: '#3fb950', fontSize: 20 }} />
-          </Col>
-        </Row>
+    <Card className="hover:shadow-float transition-shadow">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-3">
+          <div className={`flex-shrink-0 rounded-lg p-2 ${iconClass}`}>
+            <Icon className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+            <p className="mt-1 text-2xl font-bold tracking-tight text-card-foreground">{value}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col xs={24} lg={14}>
-            <Card title="每日 Token 用量（近 15 天）" size="small">
-              {last15Days.length > 0 ? (
-                <ReactECharts option={dailyChartOption} style={{ height: 260 }} />
-              ) : (
-                <EmptyState text="暂无数据" />
-              )}
-            </Card>
-          </Col>
-          <Col xs={24} lg={10}>
-            <Card title="模型分布（Top 5）" size="small">
-              {modelChartData.length > 0 ? (
-                <ReactECharts option={modelChartOption} style={{ height: 260 }} />
-              ) : (
-                <EmptyState text="暂无数据" />
-              )}
-            </Card>
-          </Col>
-        </Row>
-      </Card>
+function MetricGroup({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  icon: React.ElementType;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-3">
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground/80">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+        {title}
+      </h3>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">{children}</div>
     </div>
   );
 }
 
-export default function Dashboard() {
-  const { profiles } = useConfigStore();
-  const { user } = useAuthStore();
-  const isAdmin = user?.role === 'admin';
-  
-  const fetchInfo = useCallback(
-    () => apiClient.get<DashboardInfo>('/system/hermes-info').then((res) => res.data),
-    [],
-  );
-
-  const { data, loading, error, execute } = useApi(fetchInfo, []);
-
-  // Token statistics
-  const [profileTokenData, setProfileTokenData] = useState<ProfileTokenData[]>([]);
-  const [tokenLoading, setTokenLoading] = useState(true);
-
-  // Gateway status
-  interface GatewayStatus {
-    profile: string;
-    running: boolean;
-    pid: number | null;
-    state: string | null;
-    platforms: Record<string, unknown>;
-    updated_at: string | null;
-  }
-  const [gatewayStatuses, setGatewayStatuses] = useState<GatewayStatus[]>([]);
-  const [gatewayLoading, setGatewayLoading] = useState(true);
-  const [gatewayActionLoading, setGatewayActionLoading] = useState<string | null>(null);
-
-  // Hermes update check
-  const [updateInfo, setUpdateInfo] = useState<HermesUpdateInfo | null>(null);
-  const [updateModalVisible, setUpdateModalVisible] = useState(false);
-
-  // Hermes upgrade state
-  const [upgrading, setUpgrading] = useState(false);
-  const [upgradeSuccess, setUpgradeSuccess] = useState<boolean | null>(null);
-  const [upgradeOutput, setUpgradeOutput] = useState('');
-
-  const checkForUpdates = useCallback(async () => {
-    if (!isAdmin) return;
-    try {
-      const res = await apiClient.get<HermesUpdateInfo>('/system/hermes-update');
-      setUpdateInfo(res.data);
-    } catch {
-      // ignore
-    }
-  }, [isAdmin]);
-
-  useEffect(() => {
-    checkForUpdates();
-  }, [checkForUpdates]);
-
-  // Poll upgrade status
-  useEffect(() => {
-    if (!upgrading) return;
-    const poll = setInterval(async () => {
-      try {
-        const res = await apiClient.get<{ running: boolean; success: boolean | null; output: string }>('/system/hermes-upgrade/status');
-        setUpgradeOutput(res.data.output || '');
-        if (!res.data.running) {
-          setUpgrading(false);
-          setUpgradeSuccess(res.data.success);
-          // 升级完成后刷新版本信息
-          checkForUpdates();
-        }
-      } catch {
-        // ignore
-      }
-    }, 2000);
-    return () => clearInterval(poll);
-  }, [upgrading, checkForUpdates]);
-
-  const startUpgrade = async () => {
-    setUpgrading(true);
-    setUpgradeSuccess(null);
-    setUpgradeOutput('');
-    try {
-      await apiClient.post('/system/hermes-upgrade');
-    } catch {
-      setUpgrading(false);
-      setUpgradeSuccess(false);
-    }
-  };
-
-  const loadTokenData = useCallback(async () => {
-    setTokenLoading(true);
-    try {
-      const results = await Promise.allSettled(
-        profiles.map(async (profile) => {
-          const res = await apiClient.get<TokenDashboardData>('/tokens/dashboard', { params: { profile } });
-          return { profile, data: res.data } as ProfileTokenData;
-        }),
-      );
-      const tokenData: ProfileTokenData[] = [];
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          tokenData.push(result.value);
-        }
-      }
-      setProfileTokenData(tokenData);
-    } catch {
-      // ignore
-    } finally {
-      setTokenLoading(false);
-    }
-  }, [profiles]);
-
-  const loadGatewayStatus = useCallback(async () => {
-    setGatewayLoading(true);
-    try {
-      const res = await apiClient.get<{ statuses: GatewayStatus[] }>('/gateway/status');
-      setGatewayStatuses(res.data.statuses || []);
-      return res.data.statuses || [];
-    } catch {
-      return [];
-    } finally {
-      setGatewayLoading(false);
-    }
-  }, []);
-
-  // 静默刷新状态（不触发全局 loading，用于轮询）
-  const refreshGatewayStatusSilently = useCallback(async () => {
-    try {
-      const res = await apiClient.get<{ statuses: GatewayStatus[] }>('/gateway/status');
-      setGatewayStatuses(res.data.statuses || []);
-      return res.data.statuses || [];
-    } catch {
-      return [];
-    }
-  }, []);
-
-  // 轮询指定 profile 的网关状态，直到达到期望的 running 状态或超时
-  const pollGatewayStatus = useCallback(
-    async (profile: string, expectRunning: boolean) => {
-      const maxAttempts = 10;
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        const statuses = await refreshGatewayStatusSilently();
-        const gw = statuses.find((s) => s.profile === profile);
-        if ((gw?.running ?? false) === expectRunning) {
-          return;
-        }
-      }
-    },
-    [refreshGatewayStatusSilently],
-  );
-
-  const handleGatewayStart = useCallback(async (profile: string) => {
-    setGatewayActionLoading(profile);
-    try {
-      await apiClient.post('/gateway/start', { profile }, { timeout: 60000 });
-      await pollGatewayStatus(profile, true);
-    } catch (error) {
-      console.error('Failed to start gateway:', error);
-      await loadGatewayStatus();
-    } finally {
-      setGatewayActionLoading(null);
-    }
-  }, [pollGatewayStatus, loadGatewayStatus]);
-
-  const handleGatewayStop = useCallback(async (profile: string) => {
-    setGatewayActionLoading(profile);
-    try {
-      await apiClient.post('/gateway/stop', { profile }, { timeout: 60000 });
-      await pollGatewayStatus(profile, false);
-    } catch (error) {
-      console.error('Failed to stop gateway:', error);
-      await loadGatewayStatus();
-    } finally {
-      setGatewayActionLoading(null);
-    }
-  }, [pollGatewayStatus, loadGatewayStatus]);
-
-  const handleGatewayRestart = useCallback(async (profile: string) => {
-    setGatewayActionLoading(profile);
-    try {
-      await apiClient.post('/gateway/restart', { profile }, { timeout: 60000 });
-      await pollGatewayStatus(profile, true);
-    } catch (error) {
-      console.error('Failed to restart gateway:', error);
-      await loadGatewayStatus();
-    } finally {
-      setGatewayActionLoading(null);
-    }
-  }, [pollGatewayStatus, loadGatewayStatus]);
-
-  useEffect(() => {
-    loadTokenData();
-  }, [loadTokenData]);
-
-  useEffect(() => {
-    loadGatewayStatus();
-  }, [loadGatewayStatus]);
-
-  const handleRefresh = () => {
-    execute();
-    loadTokenData();
-    loadGatewayStatus();
-    checkForUpdates();
-  };
-
-  const profileColumns = [
-    {
-      title: 'Profile',
-      dataIndex: 'name',
-      width: '12%',
-      minWidth: 80,
-      render: (name: string) => (
-        <span
-          style={{
-            fontWeight: 600,
-            padding: '3px 10px',
-            borderRadius: 6,
-            background: getProfileColor(name),
-            color: '#fff',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {name}
-        </span>
-      ),
-    },
-    {
-      title: '路径',
-      dataIndex: 'path',
-      width: '35%',
-      minWidth: 160,
-      ellipsis: { showTitle: false },
-      render: (path: string) => (
-        <Tooltip title={path}>
-          <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{path}</span>
-        </Tooltip>
-      ),
-    },
-    {
-      title: '网关状态',
-      width: '28%',
-      minWidth: 200,
-      render: (_: unknown, record: ProfileInfo) => {
-        const gw = gatewayStatuses.find(s => s.profile === record.name);
-        const isRunning = gw?.running ?? false;
-        const isLoading = gatewayActionLoading === record.name;
-        
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tag color={isRunning ? 'success' : 'default'}>
-              {isRunning ? '运行中' : '已停止'}
-            </Tag>
-            {isRunning ? (
-              <>
-                <Button
-                  size="small"
-                  loading={isLoading}
-                  onClick={() => handleGatewayRestart(record.name)}
-                >
-                  重启
-                </Button>
-                <Button
-                  size="small"
-                  danger
-                  loading={isLoading}
-                  onClick={() => handleGatewayStop(record.name)}
-                >
-                  停止
-                </Button>
-              </>
-            ) : (
-              <Button
-                size="small"
-                type="primary"
-                loading={isLoading}
-                onClick={() => handleGatewayStart(record.name)}
-              >
-                启动
-              </Button>
-            )}
-          </div>
-        );
+function RankChartCard({ data }: { data: { name: string; value: number }[] }) {
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: 'axis' as const,
+        axisPointer: { type: 'shadow' as const },
+        formatter: (params: Array<{ name: string; value: number }>) => {
+          const p = params[0];
+          return `${p.name}<br/>${fmt(p.value)} tokens`;
+        },
       },
-    },
-    {
-      title: '会话数',
-      width: '12%',
-      minWidth: 80,
-      render: (_: unknown, record: ProfileInfo) => record.db_stats?.session_count ?? '—',
-    },
-    {
-      title: '数据库',
-      width: '13%',
-      minWidth: 80,
-      render: (_: unknown, record: ProfileInfo) => record.db_stats?.size_formatted ?? '—',
-    },
-  ];
+      grid: { left: 16, right: 24, top: 16, bottom: 24, containLabel: true },
+      xAxis: {
+        type: 'value' as const,
+        splitLine: { lineStyle: { color: '#f1f5f9' } },
+        axisLabel: { formatter: (v: number) => fmt(v), color: '#64748b' },
+      },
+      yAxis: {
+        type: 'category' as const,
+        data: data.map((d) => d.name).reverse(),
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: '#475569', fontSize: 11 },
+      },
+      series: [
+        {
+          type: 'bar',
+          data: data.map((d) => d.value).reverse(),
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+              { offset: 0, color: '#a78bfa' },
+              { offset: 1, color: '#7c3aed' },
+            ]),
+            borderRadius: [0, 6, 6, 0] as unknown as number,
+          },
+          barMaxWidth: 20,
+        },
+      ],
+    }),
+    [data]
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-primary" />
+          总 Token 使用量 Top5
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {data.length > 0 ? (
+          <ReactECharts option={option} style={{ height: 260 }} />
+        ) : (
+          <div className="h-[260px] flex items-center justify-center text-sm text-muted-foreground">
+            暂无数据
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ModelTop5Card({ data }: { data: { name: string; value: number }[] }) {
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: 'axis' as const,
+        axisPointer: { type: 'shadow' as const },
+        formatter: (params: Array<{ name: string; value: number }>) => {
+          const p = params[0];
+          return `${p.name}<br/>${fmt(p.value)} tokens`;
+        },
+      },
+      grid: { left: 16, right: 24, top: 16, bottom: 24, containLabel: true },
+      xAxis: {
+        type: 'value' as const,
+        splitLine: { lineStyle: { color: '#f1f5f9' } },
+        axisLabel: { formatter: (v: number) => fmt(v), color: '#64748b' },
+      },
+      yAxis: {
+        type: 'category' as const,
+        data: data.map((d) => d.name).reverse(),
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: '#475569', fontSize: 11 },
+      },
+      series: [
+        {
+          type: 'bar',
+          data: data.map((d) => d.value).reverse(),
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+              { offset: 0, color: '#c084fc' },
+              { offset: 1, color: '#9333ea' },
+            ]),
+            borderRadius: [0, 6, 6, 0] as unknown as number,
+          },
+          barMaxWidth: 20,
+        },
+      ],
+    }),
+    [data]
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" />
+          模型使用量 Top5
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {data.length > 0 ? (
+          <ReactECharts option={option} style={{ height: 260 }} />
+        ) : (
+          <div className="h-[260px] flex items-center justify-center text-sm text-muted-foreground">
+            暂无数据
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TodayTop5Card({ data }: { data: { name: string; value: number }[] }) {
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: 'axis' as const,
+        axisPointer: { type: 'shadow' as const },
+        formatter: (params: Array<{ name: string; value: number }>) => {
+          const p = params[0];
+          return `${p.name}<br/>${fmt(p.value)} tokens`;
+        },
+      },
+      grid: { left: 16, right: 24, top: 16, bottom: 24, containLabel: true },
+      xAxis: {
+        type: 'value' as const,
+        splitLine: { lineStyle: { color: '#f1f5f9' } },
+        axisLabel: { formatter: (v: number) => fmt(v), color: '#64748b' },
+      },
+      yAxis: {
+        type: 'category' as const,
+        data: data.map((d) => d.name).reverse(),
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: '#475569', fontSize: 11 },
+      },
+      series: [
+        {
+          type: 'bar',
+          data: data.map((d) => d.value).reverse(),
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+              { offset: 0, color: '#a78bfa' },
+              { offset: 1, color: '#7c3aed' },
+            ]),
+            borderRadius: [0, 6, 6, 0] as unknown as number,
+          },
+          barMaxWidth: 20,
+        },
+      ],
+    }),
+    [data]
+  );
+
+  return (
+    <Card className="h-full flex flex-col">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2">
+          <Zap className="h-4 w-4 text-primary" />
+          今日 Token 使用量 Top5
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {data.length > 0 ? (
+          <ReactECharts option={option} style={{ height: '100%', minHeight: 260 }} />
+        ) : (
+          <div className="h-full min-h-[260px] flex items-center justify-center text-sm text-muted-foreground">
+            暂无数据
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface DailyTrendPoint {
+  day: string;
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+function DailyTrendCard({ data }: { data: DailyTrendPoint[] }) {
+  const hasData = data.some((d) => d.total_tokens > 0);
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: 'axis' as const,
+        formatter: (params: Array<{ seriesName: string; name: string; value: number; marker: string }>) => {
+          const p = params[0];
+          return `${p?.name ?? ''}<br/>${p?.marker ?? ''} ${p?.seriesName ?? ''}: ${fmt(p?.value)}`;
+        },
+      },
+      grid: { left: 16, right: 24, top: 24, bottom: 24, containLabel: true },
+      xAxis: {
+        type: 'category' as const,
+        data: data.map((d) => d.day.slice(5)),
+        axisLine: { lineStyle: { color: '#e2e8f0' } },
+        axisLabel: { fontSize: 11, color: '#64748b' },
+      },
+      yAxis: {
+        type: 'value' as const,
+        splitLine: { lineStyle: { color: '#f1f5f9' } },
+        axisLabel: { formatter: (v: number) => fmt(v), color: '#64748b' },
+      },
+      series: [
+        {
+          name: '总 Token',
+          type: 'line' as const,
+          data: data.map((d) => d.total_tokens),
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 6,
+          lineStyle: { width: 3, color: '#7c3aed' },
+          itemStyle: { color: '#7c3aed' },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(124, 58, 237, 0.2)' },
+              { offset: 1, color: 'rgba(124, 58, 237, 0.02)' },
+            ]),
+          },
+        },
+      ],
+    }),
+    [data]
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-primary" />
+          近 15 日 Token 用量趋势
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {hasData ? (
+          <ReactECharts option={option} style={{ height: 320 }} />
+        ) : (
+          <div className="h-[320px] flex items-center justify-center text-sm text-muted-foreground">
+            暂无数据
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function Dashboard() {
+  const fetchDashboard = useCallback(() => api.refreshProfileStats(), []);
+  const { data, loading, error, execute: refresh } = useApi<DashboardData>(fetchDashboard, []);
+  const stats = useDashboardStats(data);
 
   if (error) {
     return (
-      <>
-        <PageHeader title="仪表盘" />
-        <EmptyState text={error} />
-      </>
+      <PageContainer>
+        <ErrorAlert message={error} />
+      </PageContainer>
     );
   }
 
   return (
-    <>
+    <PageContainer>
       <PageHeader
-        title="仪表盘"
         extra={
-          <>
-            {isAdmin && updateInfo?.has_update && (
-              <Button type="primary" onClick={() => setUpdateModalVisible(true)}>
-                新版本：{updateInfo.latest_version} ({(() => { const d = new Date(updateInfo.published_at); return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`; })()})
-              </Button>
-            )}
-            <a onClick={handleRefresh} style={{ cursor: 'pointer', color: '#0f766e' }}>
-              刷新
-            </a>
-          </>
+          <Button variant="outline" size="sm" onClick={refresh}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            刷新
+          </Button>
         }
       />
-      <Spin spinning={loading || tokenLoading || gatewayLoading}>
-        <Row gutter={[16, 16]}>
-          {/* System Versions as GitHub Badges */}
-          <Col span={24}>
-            <Card title="系统组件" size="small">
-              {data?.versions && Object.keys(data.versions).length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {Object.entries(data.versions).map(([key, value]) => (
-                    <GitHubBadge key={key} label={versionLabels[key] ?? key} version={value} color={badgeColors[key] ?? '#555'} />
-                  ))}
-                </div>
-              ) : (
-                <EmptyState text="暂无版本信息" />
-              )}
-            </Card>
-          </Col>
 
-          {/* Profiles Table */}
-          <Col span={24}>
-            <Card title="Profiles" size="small">
-              {data?.profiles && data.profiles.length > 0 ? (
-                <Table<ProfileInfo>
-                  rowKey="name"
-                  dataSource={data.profiles}
-                  columns={profileColumns}
-                  pagination={false}
-                  size="small"
+      {loading && <Loading className="py-12" />}
+
+      {!loading && data && (
+        <div className="space-y-8">
+          {/* Metrics + Today top5 side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="space-y-6">
+              {/* Infrastructure */}
+              <MetricGroup title="基础设施" icon={Server}>
+                <MetricCard
+                  metric={{
+                    icon: Server,
+                    label: '主机数',
+                    value: String(stats.hostCount),
+                    iconClass: 'bg-violet-100 text-violet-600',
+                  }}
                 />
-              ) : (
-                <EmptyState text="暂无 Profile" />
-              )}
-            </Card>
-          </Col>
-        </Row>
+                <MetricCard
+                  metric={{
+                    icon: Layers,
+                    label: 'Profile 数',
+                    value: String(stats.profileCount),
+                    iconClass: 'bg-indigo-100 text-indigo-600',
+                  }}
+                />
+                <MetricCard
+                  metric={{
+                    icon: CheckCircle2,
+                    label: '网关正常运行',
+                    value: String(stats.runningProfiles),
+                    iconClass: 'bg-emerald-100 text-emerald-600',
+                  }}
+                />
+              </MetricGroup>
 
-        {/* Token Statistics by Profile */}
-        {profileTokenData.length > 0 ? (
-          profileTokenData.map((item) => (
-            <ProfileTokenSection key={item.profile} profile={item.profile} data={item.data} />
-          ))
-        ) : (
-          !tokenLoading && <EmptyState text="暂无 Token 数据" />
-        )}
-      </Spin>
+              {/* Token usage */}
+              <MetricGroup title="Token 用量" icon={Zap}>
+                <MetricCard
+                  metric={{
+                    icon: Zap,
+                    label: '总 Token',
+                    value: fmt(stats.totalTokens),
+                    iconClass: 'bg-violet-100 text-violet-600',
+                  }}
+                />
+                <MetricCard
+                  metric={{
+                    icon: ArrowDownToLine,
+                    label: '总输入',
+                    value: fmt(stats.totalInputTokens),
+                    iconClass: 'bg-blue-100 text-blue-600',
+                  }}
+                />
+                <MetricCard
+                  metric={{
+                    icon: ArrowUpFromLine,
+                    label: '总输出',
+                    value: fmt(stats.totalOutputTokens),
+                    iconClass: 'bg-fuchsia-100 text-fuchsia-600',
+                  }}
+                />
+              </MetricGroup>
 
-      {/* Hermes Update Modal */}
-      {isAdmin && updateInfo && (
-        <Modal
-          title={`Hermes 新版本: ${updateInfo.latest_version}`}
-          open={updateModalVisible}
-          onCancel={() => { if (!upgrading) setUpdateModalVisible(false); }}
-          maskClosable={!upgrading}
-          footer={upgradeSuccess === true ? [
-            <Button key="close" type="primary" onClick={() => { setUpdateModalVisible(false); setUpgradeSuccess(null); }}>
-              完成
-            </Button>,
-          ] : [
-            <Button key="close" onClick={() => setUpdateModalVisible(false)} disabled={upgrading}>
-              关闭
-            </Button>,
-            <Button
-              key="download"
-              href={updateInfo.release_url}
-              target="_blank"
-              disabled={upgrading}
-            >
-              查看 Release
-            </Button>,
-            <Button
-              key="upgrade"
-              type="primary"
-              danger
-              onClick={startUpgrade}
-              loading={upgrading}
-              disabled={upgrading}
-            >
-              {upgrading ? '升级中…' : '升级 Hermes'}
-            </Button>,
-          ]}
-          width="80vw"
-          style={{ maxWidth: 1000, top: 40 }}
-          styles={{
-            wrapper: { left: 224 },
-            body: { maxHeight: 'calc(100vh - 240px)', overflow: 'auto' },
-          }}
-        >
-          <div style={{ marginBottom: 16 }}>
-            <Alert
-              message={`当前版本: ${updateInfo.current_version} → 最新版本: ${updateInfo.latest_version}`}
-              type="info"
-              showIcon
-            />
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <strong>发布时间:</strong> {new Date(updateInfo.published_at).toLocaleString()}
-          </div>
-
-          {/* Upgrade progress */}
-          {upgradeSuccess === true && (
-            <Alert
-              type="success"
-              message="升级完成！请刷新页面以加载新版本。"
-              style={{ marginTop: 12 }}
-              showIcon
-            />
-          )}
-          {upgradeSuccess === false && (
-            <Alert
-              type="error"
-              message="升级失败，请查看下方日志了解详情。"
-              style={{ marginTop: 12 }}
-              showIcon
-            />
-          )}
-          {(upgrading || upgradeOutput) && (
-            <div style={{ marginTop: 12 }}>
-              <strong>升级日志:</strong>
-              <div style={{
-                marginTop: 8,
-                padding: 12,
-                background: '#1e1e1e',
-                color: '#d4d4d4',
-                borderRadius: 4,
-                maxHeight: 250,
-                overflow: 'auto',
-                fontFamily: 'monospace',
-                fontSize: 12,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-all',
-              }}>
-                {upgradeOutput || (upgrading && '等待输出…')}
-              </div>
+              {/* Activity & performance */}
+              <MetricGroup title="活动与性能" icon={Activity}>
+                <MetricCard
+                  metric={{
+                    icon: MessageSquare,
+                    label: '总会话数',
+                    value: fmt(stats.totalSessions),
+                    iconClass: 'bg-purple-100 text-purple-600',
+                  }}
+                />
+                <MetricCard
+                  metric={{
+                    icon: Target,
+                    label: '平均缓存命中率',
+                    value: `${stats.avgCacheHitRate.toFixed(1)}%`,
+                    iconClass: 'bg-amber-100 text-amber-600',
+                  }}
+                />
+              </MetricGroup>
             </div>
-          )}
 
-          <div style={{ marginTop: 16 }}>
-            <strong>更新内容:</strong>
-            <div style={{
-              marginTop: 8,
-              padding: 12,
-              background: '#f5f5f5',
-              borderRadius: 4,
-            }}>
-              {updateInfo.release_notes ? (
-                <div className="markdown-body">
-                  <ReactMarkdown>{updateInfo.release_notes}</ReactMarkdown>
-                </div>
-              ) : (
-                <div style={{ color: '#999' }}>无更新说明</div>
-              )}
+            <div className="h-full min-h-[360px]">
+              <TodayTop5Card data={stats.todayTop5} />
             </div>
           </div>
-        </Modal>
+
+          {/* Charts row */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <RankChartCard data={stats.profileRank} />
+            <ModelTop5Card data={stats.modelTop5} />
+          </div>
+
+          {/* Daily trend */}
+          <DailyTrendCard data={stats.dailyTrend} />
+        </div>
       )}
-    </>
+    </PageContainer>
   );
 }

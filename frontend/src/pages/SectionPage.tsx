@@ -1,10 +1,16 @@
 import { useCallback, useState } from 'react';
-import { Alert, Button, Card, App as AntApp } from 'antd';
-import PageHeader from '../components/PageHeader';
-import JsonEditor from '../components/JsonEditor';
+import { Save, FileText } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
 import { apiClient } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useConfigStore } from '../store/configStore';
+import PageHeader from '../components/PageHeader';
+import PageContainer from '../components/PageContainer';
+import Loading from '../components/Loading';
+import ErrorAlert from '../components/ErrorAlert';
 
 interface Props {
   title: string;
@@ -15,7 +21,7 @@ interface Props {
 }
 
 export default function SectionPage({ title, description, endpoint, readonlyList = false, showProfileName = false }: Props) {
-  const { message } = AntApp.useApp();
+  const { toast } = useToast();
   const { activeProfile } = useConfigStore();
   const [text, setText] = useState('{}');
   const [saving, setSaving] = useState(false);
@@ -36,34 +42,63 @@ export default function SectionPage({ title, description, endpoint, readonlyList
     try {
       const parsed = JSON.parse(text);
       await apiClient.put(endpoint, parsed, { params: { profile: activeProfile } });
-      message.success('已保存');
+      toast({
+        title: '保存成功',
+        description: '配置已更新',
+      });
     } catch (e) {
       if (e instanceof SyntaxError) {
-        message.error('JSON 格式不正确');
+        toast({
+          variant: 'destructive',
+          title: 'JSON 格式错误',
+          description: '请检查 JSON 格式是否正确',
+        });
       } else {
-        message.error('保存失败');
+        toast({
+          variant: 'destructive',
+          title: '保存失败',
+          description: '请稍后重试',
+        });
       }
     } finally {
       setSaving(false);
     }
   };
 
+  const displayTitle = showProfileName ? `Profile: ${activeProfile} ${title}` : title;
+  const displayDescription = showProfileName ? description : undefined;
+
   return (
-    <>
-      <PageHeader
-        title={showProfileName ? `Profile: ${activeProfile} ${title}` : title}
-        profileName={showProfileName ? description : undefined}
-        description={showProfileName ? undefined : description}
-      />
-      {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 16 }} />}
-      <Card loading={loading}>
-        <JsonEditor value={text} onChange={setText} rows={22} />
-        {!readonlyList && (
-          <Button className="form-actions" type="primary" loading={saving} onClick={handleSave}>
-            保存
-          </Button>
-        )}
+    <PageContainer>
+      <PageHeader />
+
+      {error && <ErrorAlert message={error} />}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {loading ? (
+            <Loading className="py-12" />
+          ) : (
+            <>
+              <Textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={22}
+                className="font-mono text-sm"
+              />
+              {!readonlyList && (
+                <Button onClick={handleSave} disabled={saving}>
+                  <Save className="mr-2 h-4 w-4" />
+                  {saving ? '保存中...' : '保存'}
+                </Button>
+              )}
+            </>
+          )}
+        </CardContent>
       </Card>
-    </>
+    </PageContainer>
   );
 }

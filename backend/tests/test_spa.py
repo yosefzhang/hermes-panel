@@ -9,7 +9,7 @@ from backend.main import create_app
 def test_spa_frontend_routes_fall_back_to_index(tmp_path: Path):
     settings = Settings(
         hermes_home=tmp_path / ".hermes",
-        control_db_path=tmp_path / "control.db",
+        hermes_panel_db_path=tmp_path / "hermes-panel.db",
         default_admin_password="admin-test-password",
         jwt_secret="test-secret-for-spa-route-check",
     )

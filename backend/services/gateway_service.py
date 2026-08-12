@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .cli_runner import find_command
 from .profile_service import ProfileService
+from .subprocess_utils import get_profile_env
 
 
 @dataclass
@@ -35,8 +36,8 @@ class GatewayStatus:
 class GatewayService:
     """Reads PID/state files and shells out to the CLI to control the gateway."""
 
-    def __init__(self, hermes_home: str | Path | None = None):
-        self.profiles = ProfileService(hermes_home)
+    def __init__(self):
+        self.profiles = ProfileService()
         self.hermes_home = self.profiles.hermes_home
 
     # ── file helpers ──────────────────────────────────────
@@ -159,22 +160,25 @@ class GatewayService:
     # ── internals ─────────────────────────────────────────
 
     def _build_cmd(self, profile: str, action: str) -> list[str]:
-        """Build a `gateway <action>` command for *profile*."""
+        """Build a `gateway <action>` command for *profile*.
+        
+        Always uses `hermes -p <profile>` format for non-default profiles.
+        Does NOT use profile-named shims.
+        """
+        hermes = find_command("hermes") or "hermes"
         if profile == "default":
-            return [find_command("hermes") or "hermes", "gateway", action]
-
-        shim = find_command(profile)
-        if shim:
-            return [shim, "gateway", action]
-        return [find_command("hermes") or "hermes", "-p", profile, "gateway", action]
+            return [hermes, "gateway", action]
+        return [hermes, "-p", profile, "gateway", action]
 
     def _run(self, profile: str, action: str, *, timeout: int) -> dict:
         try:
+            env = get_profile_env(profile, self.hermes_home)
             result = subprocess.run(
                 self._build_cmd(profile, action),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             return {"success": False, "message": f"{action} 超时"}

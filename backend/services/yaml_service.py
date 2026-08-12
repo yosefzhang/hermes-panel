@@ -14,7 +14,7 @@ from .profile_service import ProfileService
 
 
 class YamlService:
-    def __init__(self, hermes_home: str | Path | None = None):
+    def __init__(self, hermes_home: Path | None = None):
         self.profiles = ProfileService(hermes_home)
         self.yaml = YAML()
         self.yaml.preserve_quotes = True

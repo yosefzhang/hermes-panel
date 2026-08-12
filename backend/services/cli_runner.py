@@ -1,9 +1,12 @@
 """Locate Hermes CLIs and build a per-profile command prefix.
 
-The panel shells out to the local `hermes` CLI (or a profile-named shim)
-for several features: plugins, skills list, gateway control, upgrade, etc.
+The panel shells out to the local `hermes` CLI for several features:
+plugins, skills list, gateway control, upgrade, etc.
 This module centralises the resolution rules so the individual service
 files don't drift apart.
+
+IMPORTANT: The panel uses `hermes -p <profile>` format to target specific profiles.
+It does NOT use profile-named shims (e.g. `xiaokui`).
 """
 from __future__ import annotations
 
@@ -41,22 +44,17 @@ def find_command(cmd_name: str, extra_paths: tuple[str, ...] = ()) -> str | None
 def get_profile_cmd_prefix(profile: str | None) -> list[str] | None:
     """Build a command prefix that targets a given profile.
 
-    Rules:
-      * default (or None) -> use the global `hermes` command
-      * any other profile -> prefer a same-named shim (e.g. `xiaokui`),
-        falling back to `hermes -p <profile>`.
+    Always uses `hermes -p <profile>` format for non-default profiles.
+    Does NOT use profile-named shims.
 
-    Returns None if neither the shim nor `hermes` is on PATH.
+    Returns None if `hermes` is not on PATH.
     """
-    if not profile or profile == "default":
-        hermes = find_command("hermes")
-        return [hermes] if hermes else None
-
-    shim = find_command(profile)
-    if shim:
-        return [shim]
-
     hermes = find_command("hermes")
-    if hermes:
-        return [hermes, "-p", profile]
-    return None
+    if not hermes:
+        return None
+
+    if not profile or profile == "default":
+        return [hermes]
+
+    # Always use `hermes -p <profile>` format
+    return [hermes, "-p", profile]

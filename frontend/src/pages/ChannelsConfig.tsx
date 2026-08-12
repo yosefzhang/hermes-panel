@@ -1,10 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Empty, Form, Input, InputNumber, Popconfirm, Space, Switch, Tabs, App as AntApp } from 'antd';
-import PageHeader from '../components/PageHeader';
-import ChannelFormModal from '../components/ChannelFormModal';
+import { useCallback, useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Pencil, Plus, Trash2, Settings, MessageSquare } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { apiClient } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useConfigStore } from '../store/configStore';
+import PageHeader from '../components/PageHeader';
+import PageContainer from '../components/PageContainer';
+import Loading from '../components/Loading';
+import ErrorAlert from '../components/ErrorAlert';
+import ConfirmDialog from '../components/ConfirmDialog';
+import EmptyState from '../components/EmptyState';
 import { CHANNEL_TYPES, getNestedValue, setNestedValue } from '../config/channelDefs';
 
 type ChannelsData = Record<string, Record<string, unknown>>;
@@ -17,8 +36,6 @@ type ChannelRow = {
   configuredVia?: string;
 };
 
-// ── Env field definitions per channel ──────────────────
-
 const ENV_FIELDS: Record<string, Array<{ key: string; label: string; password?: boolean }>> = {
   feishu: [
     { key: 'FEISHU_APP_ID', label: 'App ID' },
@@ -30,21 +47,18 @@ const ENV_FIELDS: Record<string, Array<{ key: string; label: string; password?: 
   ],
 };
 
-// ── Page ───────────────────────────────────────────────
-
 export default function ChannelsConfig() {
-  const { message, modal } = AntApp.useApp();
+  const { toast } = useToast();
   const { activeProfile } = useConfigStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingChannel, setEditingChannel] = useState<string | null>(null);
-  const [editingData, setEditingData] = useState<Record<string, unknown> | null>(null);
-  const [activeKey, setActiveKey] = useState<string | undefined>(undefined);
-  const [savingMap, setSavingMap] = useState<Record<string, boolean>>({});
+  const [formValues, setFormValues] = useState<Record<string, unknown>>({});
+  const [saving, setSaving] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ type: string; isEnv: boolean } | null>(null);
 
-  // Env inline editing state: { channelType: { FIELD: value, ... } }
   const [envValues, setEnvValues] = useState<Record<string, Record<string, string>>>({});
   const [envLoading, setEnvLoading] = useState<Record<string, boolean>>({});
-  const [envSaving, setEnvSaving] = useState<Record<string, boolean>>({});
 
   const fetchChannels = useCallback(
     () => apiClient.get<ChannelsData>('/channels', { params: { profile: activeProfile } }).then((res) => res.data),
@@ -53,7 +67,6 @@ export default function ChannelsConfig() {
 
   const { data: channels, loading, error, execute: reload } = useApi(fetchChannels, [activeProfile]);
 
-  // Load env values for all env channels
   useEffect(() => {
     if (!channels) return;
     for (const [type, config] of Object.entries(channels)) {
@@ -74,98 +87,6 @@ export default function ChannelsConfig() {
   const configuredTypes = new Set(Object.keys(channels ?? {}));
   const availableTypes = CHANNEL_TYPES.filter((c) => !configuredTypes.has(c.type));
 
-  // 默认选中第一个已配置渠道；若当前选中项被删除则回退
-  useEffect(() => {
-    const keys = Object.keys(channels ?? {});
-    if (keys.length === 0) {
-      setActiveKey(undefined);
-    } else if (!activeKey || !keys.includes(activeKey)) {
-      setActiveKey(keys[0]);
-    }
-  }, [channels, activeKey]);
-
-  const handleAdd = () => {
-    if (availableTypes.length === 0) {
-      message.info('所有预定义消息渠道都已配置');
-      return;
-    }
-    setEditingChannel(null);
-    setEditingData(null);
-    setModalOpen(true);
-  };
-
-  const handleEdit = (type: string) => {
-    setEditingChannel(type);
-    setEditingData(channels?.[type] ?? {});
-    setModalOpen(true);
-  };
-
-  const handleDelete = async (type: string) => {
-    try {
-      await apiClient.delete(`/channels/${type}`, { params: { profile: activeProfile } });
-      message.success(`已删除 ${type} 渠道配置`);
-      reload();
-    } catch {
-      message.error('删除失败');
-    }
-  };
-
-  const handleSubmit = async (type: string, formData: Record<string, unknown>) => {
-    try {
-      const cleanData: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(formData)) {
-        if (v !== undefined && v !== null && v !== '' && v !== false) {
-          cleanData[k] = v;
-        } else if (typeof v === 'number' && v === 0) {
-          cleanData[k] = v;
-        }
-      }
-      await apiClient.put(`/channels/${type}`, cleanData, { params: { profile: activeProfile } });
-      message.success(editingChannel ? `已更新 ${type} 渠道配置` : `已创建 ${type} 渠道配置`);
-      setModalOpen(false);
-      reload();
-    } catch {
-      message.error('保存失败');
-    }
-  };
-
-  // Env save
-  const handleEnvSave = async (type: string) => {
-    const values = envValues[type];
-    if (!values) return;
-    setEnvSaving((prev) => ({ ...prev, [type]: true }));
-    try {
-      await apiClient.put(`/channels/${type}/env`, values, { params: { profile: activeProfile } });
-      message.success(`${type} 环境变量已保存`);
-      reload();
-    } catch {
-      message.error('保存失败');
-    } finally {
-      setEnvSaving((prev) => ({ ...prev, [type]: false }));
-    }
-  };
-
-  // Env delete
-  const handleEnvDelete = async (type: string) => {
-    const fields = ENV_FIELDS[type]?.map((f) => f.key) ?? [];
-    const payload: Record<string, null> = {};
-    for (const f of fields) payload[f] = null;
-    try {
-      await apiClient.put(`/channels/${type}/env`, payload, { params: { profile: activeProfile } });
-      message.success(`${type} 环境变量已清除`);
-      reload();
-    } catch {
-      message.error('删除失败');
-    }
-  };
-
-  const updateEnvValue = (type: string, field: string, value: string) => {
-    setEnvValues((prev) => ({
-      ...prev,
-      [type]: { ...(prev[type] ?? {}), [field]: value },
-    }));
-  };
-
   const rows: ChannelRow[] = channelEntries.map(([type, config]) => {
     const def = CHANNEL_TYPES.find((c) => c.type === type);
     const configuredVia = config.configured_via as string | undefined;
@@ -179,208 +100,384 @@ export default function ChannelsConfig() {
     };
   });
 
-  const handleInlineSave = async (type: string, values: Record<string, unknown>) => {
-    setSavingMap((prev) => ({ ...prev, [type]: true }));
-    try {
-      const cleanData: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(values)) {
-        if (value !== undefined && value !== null && value !== '') {
-          cleanData[key] = value;
-        } else if (typeof value === 'boolean' || typeof value === 'number') {
-          cleanData[key] = value;
+  const handleAdd = () => {
+    if (availableTypes.length === 0) {
+      toast({ title: '提示', description: '所有预定义消息渠道都已配置' });
+      return;
+    }
+    setEditingChannel(null);
+    setFormValues({});
+    setModalOpen(true);
+  };
+
+  const handleEdit = (type: string) => {
+    const def = CHANNEL_TYPES.find((c) => c.type === type);
+    const config = channels?.[type] ?? {};
+    const initial: Record<string, unknown> = {};
+    if (def) {
+      for (const f of def.fields) {
+        const v = getNestedValue(config, f.key);
+        if (v !== undefined && v !== null) {
+          setNestedValue(initial, f.key, v);
+        } else if (f.defaultValue !== undefined) {
+          setNestedValue(initial, f.key, f.defaultValue);
         }
       }
-      await apiClient.put(`/channels/${type}`, cleanData, { params: { profile: activeProfile } });
-      message.success(`${type} 配置已保存`);
+    }
+    setEditingChannel(type);
+    setFormValues(initial);
+    setModalOpen(true);
+  };
+
+  const handleDelete = async (type: string) => {
+    try {
+      await apiClient.delete(`/channels/${type}`, { params: { profile: activeProfile } });
+      toast({ title: '成功', description: `已删除 ${type} 渠道配置` });
       reload();
     } catch {
-      message.error('保存失败');
-    } finally {
-      setSavingMap((prev) => ({ ...prev, [type]: false }));
+      toast({ variant: 'destructive', title: '错误', description: '删除失败' });
     }
   };
 
-  const tabItems = useMemo(() => rows.map((row) => {
-    const def = CHANNEL_TYPES.find((c) => c.type === row.type);
-    const fields = def?.fields ?? [];
-
-    const label = <span style={{ fontWeight: 600 }}>{row.label}</span>;
-
-    let children: React.ReactNode;
-
-    if (row.configuredVia === 'env') {
-      const envFields = ENV_FIELDS[row.type] ?? [];
-      children = (
-        <Card title={row.label}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {envFields.map((f) => (
-              <div key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 140, color: '#666' }}>{f.label}</div>
-                <div style={{ flex: 1 }}>
-                  {f.password ? (
-                    <Input.Password
-                      value={envValues[row.type]?.[f.key] ?? ''}
-                      placeholder={envLoading[row.type] ? '加载中...' : ''}
-                      onChange={(e) => updateEnvValue(row.type, f.key, e.target.value)}
-                    />
-                  ) : (
-                    <Input
-                      value={envValues[row.type]?.[f.key] ?? ''}
-                      placeholder={envLoading[row.type] ? '加载中...' : ''}
-                      onChange={(e) => updateEnvValue(row.type, f.key, e.target.value)}
-                    />
-                  )}
-                </div>
-              </div>
-            ))}
-            <Space>
-              <Button
-                type="primary"
-                loading={envSaving[row.type]}
-                onClick={() => {
-                  modal.confirm({
-                    title: `保存 ${row.label} 环境变量`,
-                    content: '确定要将新的环境变量写入 .env 文件吗？',
-                    okText: '保存',
-                    cancelText: '取消',
-                    onOk: () => handleEnvSave(row.type),
-                  });
-                }}
-              >
-                保存
-              </Button>
-              <Popconfirm
-                title={`确定要清除 ${row.label} 的环境变量配置吗？`}
-                description="此操作会将相关环境变量设为空值"
-                onConfirm={() => handleEnvDelete(row.type)}
-                okText="删除"
-                cancelText="取消"
-                okType="danger"
-              >
-                <Button danger>删除</Button>
-              </Popconfirm>
-            </Space>
-          </div>
-        </Card>
-      );
-    } else {
-      const initialValues: Record<string, unknown> = {};
-      for (const field of fields) {
-        const value = getNestedValue(row.config, field.key);
-        if (value !== undefined) {
-          setNestedValue(initialValues, field.key, value);
+  const handleSubmit = async () => {
+    if (!editingChannel) return;
+    setSaving(true);
+    try {
+      const cleanData: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(formValues)) {
+        if (v !== undefined && v !== null && v !== '' && v !== false) {
+          cleanData[k] = v;
+        } else if (typeof v === 'number' && v === 0) {
+          cleanData[k] = v;
         }
       }
+      await apiClient.put(`/channels/${editingChannel}`, cleanData, { params: { profile: activeProfile } });
+      toast({ title: '成功', description: editingChannel ? `已更新 ${editingChannel} 渠道配置` : `已创建 ${editingChannel} 渠道配置` });
+      setModalOpen(false);
+      reload();
+    } catch {
+      toast({ variant: 'destructive', title: '错误', description: '保存失败' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
-      children = (
-        <Card title={row.label}>
-          <Form
-            layout="vertical"
-            initialValues={initialValues}
-            onFinish={(values) => handleInlineSave(row.type, values)}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {fields.map((field) => {
-                const namePath = field.key.split('.');
-                return (
-                  <div key={field.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                    <div style={{ width: 160, paddingTop: 6, color: '#666' }}>{field.label}</div>
-                    <div style={{ flex: 1 }}>
-                      {field.type === 'boolean' ? (
-                        <Form.Item name={namePath} valuePropName="checked" style={{ marginBottom: 0 }}>
-                          <Switch />
-                        </Form.Item>
-                      ) : field.type === 'number' ? (
-                        <Form.Item name={namePath} style={{ marginBottom: 0 }}>
-                          <InputNumber style={{ width: '100%' }} placeholder={field.placeholder} />
-                        </Form.Item>
-                      ) : field.type === 'password' ? (
-                        <Form.Item name={namePath} style={{ marginBottom: 0 }}>
-                          <Input.Password placeholder={field.placeholder} />
-                        </Form.Item>
-                      ) : field.type === 'textarea' ? (
-                        <Form.Item name={namePath} style={{ marginBottom: 0 }}>
-                          <Input.TextArea placeholder={field.placeholder} rows={3} />
-                        </Form.Item>
-                      ) : (
-                        <Form.Item name={namePath} style={{ marginBottom: 0 }}>
-                          <Input placeholder={field.placeholder} />
-                        </Form.Item>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+  const handleEnvSave = async (type: string) => {
+    const values = envValues[type];
+    if (!values) return;
+    try {
+      await apiClient.put(`/channels/${type}/env`, values, { params: { profile: activeProfile } });
+      toast({ title: '成功', description: `${type} 环境变量已保存` });
+      reload();
+    } catch {
+      toast({ variant: 'destructive', title: '错误', description: '保存失败' });
+    }
+  };
+
+  const handleEnvDelete = async (type: string) => {
+    const fields = ENV_FIELDS[type]?.map((f) => f.key) ?? [];
+    const payload: Record<string, null> = {};
+    for (const f of fields) payload[f] = null;
+    try {
+      await apiClient.put(`/channels/${type}/env`, payload, { params: { profile: activeProfile } });
+      toast({ title: '成功', description: `${type} 环境变量已清除` });
+      reload();
+    } catch {
+      toast({ variant: 'destructive', title: '错误', description: '删除失败' });
+    }
+  };
+
+  const updateFormValue = (key: string, value: unknown) => {
+    setFormValues((prev) => {
+      const next = { ...prev };
+      setNestedValue(next, key, value);
+      return next;
+    });
+  };
+
+  const updateEnvValue = (type: string, field: string, value: string) => {
+    setEnvValues((prev) => ({
+      ...prev,
+      [type]: { ...(prev[type] ?? {}), [field]: value },
+    }));
+  };
+
+  const openDeleteDialog = (type: string, isEnv: boolean) => {
+    setDeleteTarget({ type, isEnv });
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.isEnv) {
+      await handleEnvDelete(deleteTarget.type);
+    } else {
+      await handleDelete(deleteTarget.type);
+    }
+    setDeleteDialogOpen(false);
+    setDeleteTarget(null);
+  };
+
+  const getFieldDisplayValue = (field: { key: string; label: string; type: string }, config: Record<string, unknown>): string => {
+    const val = getNestedValue(config, field.key);
+    if (val === undefined || val === null || val === '' || val === false) return '';
+    if (field.type === 'boolean') return val ? '是' : '否';
+    if (field.type === 'password') return '••••••••';
+    return String(val);
+  };
+
+  const renderChannelCard = (row: ChannelRow) => {
+    const def = CHANNEL_TYPES.find((c) => c.type === row.type);
+    if (row.configuredVia === 'env') {
+      const envFields = ENV_FIELDS[row.type] ?? [];
+      return (
+        <Card key={row.key} className="relative">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                {row.label}
+                <Badge variant="secondary" className="text-xs font-normal">环境变量</Badge>
+                {row.enabled ? (
+                  <Badge variant="default" className="text-xs font-normal">已启用</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs font-normal bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-transparent">未启用</Badge>
+                )}
+              </CardTitle>
+              <CardDescription>{def?.description}</CardDescription>
             </div>
-
-            <Space style={{ marginTop: 16 }}>
-              <Button type="primary" htmlType="submit" loading={savingMap[row.type]}>
-                保存
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" onClick={() => handleEdit(row.type)}>
+                <Pencil className="h-4 w-4 mr-1" />
+                编辑
               </Button>
-              <Button onClick={() => handleEdit(row.type)}>
-                高级编辑
+              <Button variant="ghost" size="sm" onClick={() => openDeleteDialog(row.type, true)}>
+                <Trash2 className="h-4 w-4 mr-1" />
+                清除
               </Button>
-              <Popconfirm
-                title={`确定要删除 ${row.label} 的配置吗？`}
-                onConfirm={() => handleDelete(row.type)}
-                okText="删除"
-                cancelText="取消"
-              >
-                <Button danger>删除</Button>
-              </Popconfirm>
-            </Space>
-          </Form>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+              {envFields.map((f) => (
+                <div key={f.key} className="flex items-center gap-2">
+                  <span className="text-muted-foreground shrink-0">{f.label}：</span>
+                  <span className="font-mono text-xs truncate">
+                    {envValues[row.type]?.[f.key]
+                      ? f.password
+                        ? '••••••••'
+                        : envValues[row.type][f.key]
+                      : <span className="text-muted-foreground/50">未设置</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
         </Card>
       );
     }
 
-    return {
-      key: row.key,
-      label,
-      children,
-    };
-  }), [rows, envValues, envLoading, envSaving, savingMap, activeProfile]);
+    const displayFields = def?.fields.filter((f) => {
+      const val = getNestedValue(row.config, f.key);
+      if (val === undefined || val === null || val === '' || val === false) return false;
+      if (f.type === 'password') return false;
+      return true;
+    }) ?? [];
+
+    return (
+      <Card key={row.key} className="relative">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <MessageSquare className="h-4 w-4 text-muted-foreground" />
+              {row.label}
+              {row.enabled ? (
+                <Badge variant="default" className="text-xs font-normal">已启用</Badge>
+              ) : (
+                <Badge variant="outline" className="text-xs font-normal bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-transparent">未启用</Badge>
+              )}
+            </CardTitle>
+            <CardDescription>{def?.description}</CardDescription>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => handleEdit(row.type)}>
+              <Pencil className="h-4 w-4 mr-1" />
+              编辑
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => openDeleteDialog(row.type, false)}>
+              <Trash2 className="h-4 w-4 mr-1" />
+              删除
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {displayFields.length === 0 ? (
+            <p className="text-sm text-muted-foreground">暂无详细配置</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+              {displayFields.map((f) => (
+                <div key={f.key} className="flex items-center gap-2">
+                  <span className="text-muted-foreground shrink-0">{f.label}：</span>
+                  <span className={f.type === 'boolean' ? '' : 'font-mono text-xs truncate'}>
+                    {getFieldDisplayValue(f, row.config) || <span className="text-muted-foreground/50">未设置</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const renderEditDialog = () => {
+    if (!editingChannel) return null;
+    const def = CHANNEL_TYPES.find((c) => c.type === editingChannel);
+    if (!def) return null;
+
+    return (
+      <Dialog open={modalOpen} onOpenChange={(open) => { if (!open) setModalOpen(false); }}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>编辑 {def.label} 渠道</DialogTitle>
+            <DialogDescription>{def.description}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {def.fields.map((field) => {
+              const value = getNestedValue(formValues, field.key);
+              return (
+                <div key={field.key} className="grid grid-cols-[140px_1fr] gap-3 items-start">
+                  <Label className="text-muted-foreground pt-2">
+                    {field.label}
+                    {field.required && <span className="text-red-500 ml-1">*</span>}
+                  </Label>
+                  <div>
+                    {field.type === 'boolean' ? (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Switch
+                          checked={Boolean(value)}
+                          onCheckedChange={(v) => updateFormValue(field.key, v)}
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {value ? '已启用' : '未启用'}
+                        </span>
+                      </div>
+                    ) : field.type === 'number' ? (
+                      <Input
+                        type="number"
+                        value={value !== undefined ? Number(value) : ''}
+                        placeholder={field.placeholder}
+                        onChange={(e) => updateFormValue(field.key, e.target.value ? Number(e.target.value) : undefined)}
+                      />
+                    ) : field.type === 'password' ? (
+                      <Input
+                        type="password"
+                        value={(value as string) ?? ''}
+                        placeholder={field.placeholder}
+                        onChange={(e) => updateFormValue(field.key, e.target.value)}
+                      />
+                    ) : field.type === 'textarea' ? (
+                      <textarea
+                        value={(value as string) ?? ''}
+                        placeholder={field.placeholder}
+                        rows={3}
+                        onChange={(e) => updateFormValue(field.key, e.target.value)}
+                        className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    ) : (
+                      <Input
+                        value={(value as string) ?? ''}
+                        placeholder={field.placeholder}
+                        onChange={(e) => updateFormValue(field.key, e.target.value)}
+                      />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModalOpen(false)}>取消</Button>
+            <Button onClick={handleSubmit} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
+  const renderAddDialog = () => (
+    <Dialog open={modalOpen && !editingChannel} onOpenChange={(open) => { if (!open) setModalOpen(false); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>新增渠道</DialogTitle>
+          <DialogDescription>选择渠道类型并配置参数</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2 py-4">
+          {availableTypes.map((type) => (
+            <Button
+              key={type.type}
+              variant="outline"
+              className="justify-start h-auto py-3 px-4"
+              onClick={() => {
+                setEditingChannel(type.type);
+                setFormValues({});
+                setModalOpen(true);
+              }}
+            >
+              <div className="text-left">
+                <div className="font-medium">{type.label}</div>
+                <div className="text-xs text-muted-foreground">{type.description}</div>
+              </div>
+            </Button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 
   return (
-    <>
+    <PageContainer>
       <PageHeader
-        title="消息渠道"
-        profile={activeProfile}
-        profileName="配置和管理当前 Profile 的消息平台接入。"
         extra={
-          <Button type="primary" onClick={handleAdd} disabled={availableTypes.length === 0}>
+          <Button onClick={handleAdd} disabled={availableTypes.length === 0}>
+            <Plus className="mr-2 h-4 w-4" />
             新增渠道
           </Button>
         }
       />
 
-      {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 16 }} />}
+      {error && <ErrorAlert message={error} />}
 
-      {rows.length === 0 ? (
-        <Card>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无消息渠道配置">
-            <Button type="primary" onClick={handleAdd}>
-              新增渠道
-            </Button>
-          </Empty>
-        </Card>
+      {rows.length === 0 && !loading ? (
+        <EmptyState text="暂无消息渠道配置">
+          <Button onClick={handleAdd}>
+            <Plus className="mr-2 h-4 w-4" />
+            新增渠道
+          </Button>
+        </EmptyState>
       ) : (
-        <Tabs
-          activeKey={activeKey}
-          onChange={setActiveKey}
-          type="card"
-          items={tabItems}
-        />
+        <div className="space-y-4">
+          {rows.map((row) => renderChannelCard(row))}
+        </div>
       )}
 
-      <ChannelFormModal
-        open={modalOpen}
-        editingType={editingChannel}
-        initialData={editingData}
-        disabledTypes={Object.keys(channels ?? {})}
-        onCancel={() => setModalOpen(false)}
-        onSubmit={handleSubmit}
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title={deleteTarget?.isEnv ? '清除环境变量' : '删除配置'}
+        description={
+          deleteTarget?.isEnv
+            ? `确定要清除 ${deleteTarget.type} 的环境变量配置吗？`
+            : `确定要删除 ${deleteTarget?.type} 的配置吗？此操作不可撤销。`
+        }
+        variant="destructive"
+        onConfirm={confirmDelete}
       />
-    </>
+
+      {renderAddDialog()}
+      {renderEditDialog()}
+    </PageContainer>
   );
 }

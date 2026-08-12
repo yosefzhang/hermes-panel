@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, Row, Spin, Statistic } from 'antd';
 import ReactECharts from 'echarts-for-react';
-import PageHeader from '../components/PageHeader';
-import EmptyState from '../components/EmptyState';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RefreshCw, Coins } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { useConfigStore } from '../store/configStore';
+import PageHeader from '../components/PageHeader';
+import PageContainer from '../components/PageContainer';
+import Loading from '../components/Loading';
+import ErrorAlert from '../components/ErrorAlert';
+import EmptyState from '../components/EmptyState';
 import type { TokenDashboardData, TokenDailyEntry, TokenModelEntry } from '../types';
 
 function fmt(n: number | null | undefined): string {
@@ -31,6 +36,15 @@ function topFiveWithOther(models: TokenModelEntry[]): TokenModelEntry[] {
   const top5 = models.slice(0, 5);
   const otherTokens = models.slice(5).reduce((sum, m) => sum + m.total_tokens, 0);
   return [...top5, { model: 'Other', total_tokens: otherTokens, sessions: 0 }];
+}
+
+function StatCard({ title, value, color = 'text-foreground' }: { title: string; value: string; color?: string }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-sm text-muted-foreground">{title}</div>
+      <div className={`text-xl font-semibold ${color}`}>{value}</div>
+    </div>
+  );
 }
 
 function ProfileSection({ profile, data }: { profile: string; data: TokenDashboardData }) {
@@ -102,55 +116,55 @@ function ProfileSection({ profile, data }: { profile: string; data: TokenDashboa
   }), [modelChartData]);
 
   return (
-    <div style={{ marginBottom: 24 }}>
-      <Card
-        title={<span style={{ fontWeight: 600 }}>{profile}</span>}
-        size="small"
-        styles={{ header: { background: '#f0f7f6' } }}
-      >
-        <Row gutter={[12, 12]}>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="总 Token" value={fmt(summary.total_tokens)} valueStyle={{ color: '#0f766e', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="总输入" value={fmt(summary.total_input_tokens)} valueStyle={{ color: '#0891b2', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="总输出" value={fmt(summary.total_output_tokens)} valueStyle={{ color: '#d97706', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="缓存命中率" value={summary.cache_hit_rate} suffix="%" precision={1} valueStyle={{ color: '#7c3aed', fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="会话数" value={summary.total_sessions} valueStyle={{ fontSize: 20 }} />
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic title="估算费用" value={fmtCost(summary.total_cost_usd)} valueStyle={{ color: '#3fb950', fontSize: 20 }} />
-          </Col>
-        </Row>
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle>{profile}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* 统计卡片 */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <StatCard title="总 Token" value={fmt(summary.total_tokens)} color="text-primary" />
+          <StatCard title="总输入" value={fmt(summary.total_input_tokens)} color="text-primary" />
+          <StatCard title="总输出" value={fmt(summary.total_output_tokens)} color="text-primary" />
+          <StatCard title="缓存命中率" value={`${summary.cache_hit_rate.toFixed(1)}%`} color="text-primary" />
+          <StatCard title="会话数" value={summary.total_sessions.toString()} color="text-primary" />
+          <StatCard title="估算费用" value={fmtCost(summary.total_cost_usd)} color="text-primary" />
+        </div>
 
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col xs={24} lg={14}>
-            <Card title="每日 Token 用量（近 15 天）" size="small">
+        {/* 图表区域 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>每日 Token 用量（近 15 天）</CardTitle>
+            </CardHeader>
+            <CardContent>
               {last15Days.length > 0 ? (
                 <ReactECharts option={dailyChartOption} style={{ height: 260 }} />
               ) : (
-                <EmptyState text="暂无数据" />
+                <div className="h-[260px] flex items-center justify-center text-muted-foreground">
+                  暂无数据
+                </div>
               )}
-            </Card>
-          </Col>
-          <Col xs={24} lg={10}>
-            <Card title="模型分布（Top 5）" size="small">
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>模型分布（Top 5）</CardTitle>
+            </CardHeader>
+            <CardContent>
               {modelChartData.length > 0 ? (
                 <ReactECharts option={modelChartOption} style={{ height: 260 }} />
               ) : (
-                <EmptyState text="暂无数据" />
+                <div className="h-[260px] flex items-center justify-center text-muted-foreground">
+                  暂无数据
+                </div>
               )}
-            </Card>
-          </Col>
-        </Row>
-      </Card>
-    </div>
+            </CardContent>
+          </Card>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -197,21 +211,25 @@ export default function TokenUsage() {
   }, [loadData]);
 
   return (
-    <>
+    <PageContainer>
       <PageHeader
-        title="Token 统计"
         extra={
-          <Button onClick={loadData} loading={loading}>刷新</Button>
+          <Button onClick={loadData} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </Button>
         }
       />
-      {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 16 }} />}
-      <Spin spinning={loading}>
-        {profileData.length > 0 ? (
-          profileData.map((item) => <ProfileSection key={item.profile} profile={item.profile} data={item.data} />)
-        ) : (
-          !loading && <EmptyState text="暂无数据" />
-        )}
-      </Spin>
-    </>
+
+      {error && <ErrorAlert message={error} />}
+
+      {loading ? (
+        <Loading className="py-12" />
+      ) : profileData.length > 0 ? (
+        profileData.map((item) => <ProfileSection key={item.profile} profile={item.profile} data={item.data} />)
+      ) : (
+        <EmptyState text="暂无 Token 使用数据" />
+      )}
+    </PageContainer>
   );
 }

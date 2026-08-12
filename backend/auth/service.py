@@ -43,17 +43,17 @@ class AuthService:
         return self.get_user(int(payload["sub"]))
 
     def get_user(self, user_id: int) -> User | None:
-        with connect(self.settings.control_db_path) as connection:
+        with connect(self.settings.hermes_panel_db_path) as connection:
             row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         return row_to_user(row)
 
     def get_user_by_username(self, username: str) -> User | None:
-        with connect(self.settings.control_db_path) as connection:
+        with connect(self.settings.hermes_panel_db_path) as connection:
             row = connection.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         return row_to_user(row)
 
     def list_users(self) -> list[dict]:
-        with connect(self.settings.control_db_path) as connection:
+        with connect(self.settings.hermes_panel_db_path) as connection:
             rows = connection.execute("SELECT * FROM users ORDER BY id").fetchall()
         return [row_to_user(row).public_dict() for row in rows]
 
@@ -61,7 +61,7 @@ class AuthService:
         now = time.time()
         profiles = ["*"] if payload.role == "admin" else payload.profiles
         try:
-            with connect(self.settings.control_db_path) as connection:
+            with connect(self.settings.hermes_panel_db_path) as connection:
                 cursor = connection.execute(
                     """
                     INSERT INTO users (username, password_hash, role, profiles, created_at, updated_at)
@@ -98,12 +98,12 @@ class AuthService:
             values.append(hash_password(payload.password))
         values.append(user_id)
 
-        with connect(self.settings.control_db_path) as connection:
+        with connect(self.settings.hermes_panel_db_path) as connection:
             connection.execute(f"UPDATE users SET {', '.join(assignments)} WHERE id = ?", values)
         return self.get_user(user_id).public_dict()
 
     def delete_user(self, user_id: int) -> bool:
-        with connect(self.settings.control_db_path) as connection:
+        with connect(self.settings.hermes_panel_db_path) as connection:
             cursor = connection.execute(
                 "DELETE FROM users WHERE id = ? AND username != ?",
                 (user_id, DEFAULT_ADMIN_USERNAME),

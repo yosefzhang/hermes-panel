@@ -8,14 +8,13 @@ import { useConfigStore } from './store/configStore';
 
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
-const ProfileEnv = lazy(() => import('./pages/ProfileEnv'));
+const ProfileStats = lazy(() => import('./pages/ProfileStats'));
+const Settings = lazy(() => import('./pages/Settings'));
 const SkillsManager = lazy(() => import('./pages/SkillsManager'));
 const PluginsManager = lazy(() => import('./pages/PluginsManager'));
-const ProfilesManager = lazy(() => import('./pages/ProfilesManager'));
 const ModelsConfig = lazy(() => import('./pages/ModelsConfig'));
 const ChannelsConfig = lazy(() => import('./pages/ChannelsConfig'));
 const MemoryConfig = lazy(() => import('./pages/MemoryConfig'));
-const UserManagement = lazy(() => import('./pages/UserManagement'));
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const location = useLocation();
@@ -38,15 +37,26 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 
 function ProfileRouteWrapper() {
   const { profile } = useParams<{ profile: string }>();
-  const { setProfile, loadProfiles } = useConfigStore();
+  const setProfile = useConfigStore((s) => s.setProfile);
+  const loadProfiles = useConfigStore((s) => s.loadProfiles);
 
   useEffect(() => {
-    loadProfiles().then(() => {
-      const { profiles } = useConfigStore.getState();
-      if (profile && profiles.includes(profile)) {
-        setProfile(profile);
-      }
-    });
+    if (!profile) return;
+    // Only hit the API when the profile is unknown to the store; this avoids
+    // re-fetching (and re-rendering the whole tree) on every sub-page switch
+    // under /:profile/*, which caused a visible flash on each navigation.
+    // Read the profiles snapshot synchronously inside the effect so changes
+    // to the profiles array don't retrigger this effect.
+    const { profiles } = useConfigStore.getState();
+    if (!profiles.includes(profile)) {
+      loadProfiles().then(() => {
+        if (useConfigStore.getState().profiles.includes(profile)) {
+          setProfile(profile);
+        }
+      });
+    } else {
+      setProfile(profile);
+    }
   }, [profile, setProfile, loadProfiles]);
 
   return <Outlet />;
@@ -62,16 +72,15 @@ export default function App() {
             <Route path="/" element={<RequireAuth><AppLayout /></RequireAuth>}>
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />} />
-              <Route path="profiles" element={<ProfilesManager />} />
-              <Route path="users" element={<UserManagement />} />
+              <Route path="profiles" element={<ProfileStats />} />
+              <Route path="settings" element={<Settings />} />
               <Route path=":profile" element={<ProfileRouteWrapper />}>
-                <Route path="env" element={<ProfileEnv />} />
-                <Route path="skills" element={<SkillsManager />} />
-                <Route path="plugins" element={<PluginsManager />} />
                 <Route path="models" element={<ModelsConfig />} />
                 <Route path="channels" element={<ChannelsConfig />} />
+                <Route path="skills" element={<SkillsManager />} />
+                <Route path="plugins" element={<PluginsManager />} />
                 <Route path="memory" element={<MemoryConfig />} />
-                <Route index element={<Navigate to="env" replace />} />
+                <Route index element={<Navigate to="models" replace />} />
               </Route>
             </Route>
           </Routes>

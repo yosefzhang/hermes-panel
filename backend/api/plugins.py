@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, Query
 from backend.auth.dependencies import ensure_profile_access, get_current_user
 from backend.db.models import User
 from backend.services.cli_runner import get_profile_cmd_prefix
+from backend.services.profile_service import ProfileService
+from backend.services.subprocess_utils import get_profile_env
 
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
@@ -116,12 +118,16 @@ def _run_plugin_cmd(profile: str, *args: str, timeout: int = 30) -> dict:
     if not cmd:
         return {"ok": False, "error": f"command not found: {'hermes' if profile == 'default' else profile}"}
 
+    # 使用 hermes -p <profile> 格式调用 CLI，并设置对应 profile 的 HERMES_HOME
+    env = get_profile_env(profile, ProfileService().hermes_home)
+
     try:
         result = subprocess.run(
             [*cmd, "plugins", *args],
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
         return {"ok": False, "error": str(exc)}
@@ -143,6 +149,9 @@ def list_plugins(
     if not cmd:
         return {"plugins": [], "error": f"command not found: {'hermes' if profile == 'default' else profile}"}
 
+    # 使用 hermes -p <profile> 格式调用 CLI，并设置对应 profile 的 HERMES_HOME
+    env = get_profile_env(profile, ProfileService().hermes_home)
+
     bundled_manifest = scan_bundled_plugins_manifest(force_refresh=refresh)
     try:
         result = subprocess.run(
@@ -150,6 +159,7 @@ def list_plugins(
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
         return {"plugins": [], "error": str(exc)}

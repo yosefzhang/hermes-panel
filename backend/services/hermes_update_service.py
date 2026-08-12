@@ -4,10 +4,12 @@ import re
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
 from backend.services.cli_runner import find_command
+from backend.services.subprocess_utils import get_clean_env
 
 # 模块级升级状态（单例，全局唯一）
 _upgrade_state: dict = {
@@ -54,6 +56,7 @@ class HermesUpdateService:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=get_clean_env(),
             )
             if result.returncode == 0:
                 # 例："Hermes Agent v0.18.0 (2026.7.1) · upstream ..."
@@ -76,7 +79,7 @@ class HermesUpdateService:
         match = re.search(r"v?(\d+\.\d+\.\d+)", name or "")
         return f"v{match.group(1)}" if match else None
 
-    def _cli_check(self) -> tuple[bool | None, str]:
+    def _cli_check(self, timeout: int = 90) -> tuple[bool | None, str]:
         """运行 `hermes update --check`，返回 (是否有更新, 原始输出)。
 
         返回值第一项为 None 表示输出无法判定（网络失败、格式变化等），
@@ -89,7 +92,8 @@ class HermesUpdateService:
                 [self.hermes_bin, "update", "--check"],
                 capture_output=True,
                 text=True,
-                timeout=90,
+                timeout=timeout,
+                env=get_clean_env(),
             )
         except Exception as exc:  # noqa: BLE001 - 检查失败一律视为不可判定
             return None, f"update --check failed: {exc}"
@@ -138,11 +142,11 @@ class HermesUpdateService:
             "release_url": data.get("html_url", ""),
         }
 
-    def check_for_updates(self) -> dict:
-        """检查是否有新版本可用。
+    def _do_check_for_updates(self, cli_timeout: int = 90) -> dict:
+        """实际执行检查并返回结果（不读缓存）。
 
-        以 `hermes update --check` 为权威判定；GitHub release 仅用于补充
-        版本标签、发布说明等展示信息。CLI 判定不可用时回退到版本号比较。
+        CLI 检查与 GitHub release 查询并行执行，整体耗时由两者中较慢的一方决定，
+        避免串行等待导致前端超时取消请求。
         """
         if not self.hermes_bin:
             return {
@@ -152,8 +156,11 @@ class HermesUpdateService:
                 "error": "hermes CLI not found on PATH",
             }
 
-        cli_has_update, cli_output = self._cli_check()
-        github = self._fetch_github_release()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            cli_future = executor.submit(self._cli_check, cli_timeout)
+            github_future = executor.submit(self._fetch_github_release)
+            cli_has_update, cli_output = cli_future.result()
+            github = github_future.result()
 
         result: dict = {
             "current_version": self.current_version,
@@ -179,6 +186,14 @@ class HermesUpdateService:
             result["has_update"] = False
 
         return result
+
+    def check_for_updates(self) -> dict:
+        """检查是否有新版本可用。
+
+        每次调用都同步执行一次检查；CLI 命令设置 15 秒超时，避免网络不可达时
+        长时间挂起。由前端手动触发（点击刷新），后端不做自动轮询。
+        """
+        return self._do_check_for_updates(cli_timeout=15)
 
     def start_upgrade(self) -> dict:
         """启动 Hermes 升级（后台异步执行 `hermes update`）。"""
@@ -213,6 +228,7 @@ class HermesUpdateService:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    env=get_clean_env(),
                 )
                 _upgrade_state["pid"] = proc.pid
                 if proc.stdout:

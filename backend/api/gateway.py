@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from backend.auth.dependencies import get_current_user
 from backend.db.models import User
+from backend.services.audit_log import log_audit_event
 from backend.services.gateway_service import GatewayService
 from backend.services.profile_service import ProfileService
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/gateway", tags=["gateway"])
 
 
 def gateway_service(request: Request) -> GatewayService:
-    return GatewayService(request.app.state.settings.hermes_home)
+    return GatewayService()
 
 
 class GatewayActionRequest(BaseModel):
@@ -32,6 +33,10 @@ def _get_accessible_profiles(user: User, all_profiles: list[str]) -> list[str]:
     if user.role == "admin" or "*" in user.profiles:
         return all_profiles
     return [p for p in all_profiles if p in user.profiles]
+
+
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
 
 
 @router.get("/status")
@@ -76,13 +81,24 @@ def get_all_gateway_statuses(
 
 @router.post("/start")
 def start_gateway(
-    request: GatewayActionRequest,
+    request: Request,
+    body: GatewayActionRequest,
     user: User = Depends(get_current_user),
     service: GatewayService = Depends(gateway_service),
 ):
     """启动指定 profile 的网关"""
-    _check_profile_access(user, request.profile)
-    result = service.start(request.profile)
+    _check_profile_access(user, body.profile)
+    result = service.start(body.profile)
+    log_audit_event(
+        request.app.state.settings,
+        action="gateway:start",
+        actor=user.username,
+        target_type="profile",
+        target_id=body.profile,
+        details={"message": result.get("message")},
+        success=result.get("success"),
+        ip_address=_client_ip(request),
+    )
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
@@ -90,13 +106,24 @@ def start_gateway(
 
 @router.post("/stop")
 def stop_gateway(
-    request: GatewayActionRequest,
+    request: Request,
+    body: GatewayActionRequest,
     user: User = Depends(get_current_user),
     service: GatewayService = Depends(gateway_service),
 ):
     """停止指定 profile 的网关"""
-    _check_profile_access(user, request.profile)
-    result = service.stop(request.profile)
+    _check_profile_access(user, body.profile)
+    result = service.stop(body.profile)
+    log_audit_event(
+        request.app.state.settings,
+        action="gateway:stop",
+        actor=user.username,
+        target_type="profile",
+        target_id=body.profile,
+        details={"message": result.get("message")},
+        success=result.get("success"),
+        ip_address=_client_ip(request),
+    )
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
@@ -104,13 +131,24 @@ def stop_gateway(
 
 @router.post("/restart")
 def restart_gateway(
-    request: GatewayActionRequest,
+    request: Request,
+    body: GatewayActionRequest,
     user: User = Depends(get_current_user),
     service: GatewayService = Depends(gateway_service),
 ):
     """重启指定 profile 的网关"""
-    _check_profile_access(user, request.profile)
-    result = service.restart(request.profile)
+    _check_profile_access(user, body.profile)
+    result = service.restart(body.profile)
+    log_audit_event(
+        request.app.state.settings,
+        action="gateway:restart",
+        actor=user.username,
+        target_type="profile",
+        target_id=body.profile,
+        details={"message": result.get("message")},
+        success=result.get("success"),
+        ip_address=_client_ip(request),
+    )
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result

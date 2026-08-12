@@ -1,11 +1,27 @@
-.PHONY: install dev dev-backend dev-frontend build test lint clean stop
+.PHONY: install ensure-dev-env ensure-backend-deps ensure-frontend-deps dev dev-backend dev-frontend build test lint clean stop
 
 install:
 	python3 -m venv .venv
 	. .venv/bin/activate && pip install -e ".[dev]"
 	cd frontend && npm install
 
-dev:
+ensure-backend-deps:
+	@if [ ! -f .venv/bin/activate ]; then \
+		echo "Creating Python virtual environment..."; \
+		python3 -m venv .venv; \
+	fi
+	@. .venv/bin/activate && python -c "import fastapi, uvicorn" >/dev/null 2>&1 || \
+		(echo "Installing backend dependencies..." && . .venv/bin/activate && pip install -e ".[dev]")
+
+ensure-frontend-deps:
+	@if [ ! -x frontend/node_modules/.bin/vite ]; then \
+		echo "Installing frontend dependencies..."; \
+		cd frontend && npm install; \
+	fi
+
+ensure-dev-env: ensure-backend-deps ensure-frontend-deps
+
+dev: ensure-dev-env
 	@echo "Starting backend on :8650 and frontend on :5173..."
 	@trap 'kill 0' EXIT; \
 	(. .venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port 8650 --reload) & \

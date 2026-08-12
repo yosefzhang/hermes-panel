@@ -1,4 +1,5 @@
 from typing import Any
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 
@@ -38,13 +39,13 @@ CHANNEL_ENV_ALT_MARKERS: dict[str, list[str]] = {
 }
 
 
-def _read_env_vars_for_profile(profile: str | None, hermes_home: str | None = None) -> dict[str, str]:
+def _read_env_vars_for_profile(profile: str | None, hermes_home: Path | None = None) -> dict[str, str]:
     """读取 profile 的 .env 文件"""
     svc = EnvService(hermes_home=hermes_home)
     return svc.read_env(profile)
 
 
-def _detect_env_channels(profile: str | None, hermes_home: str | None = None) -> set[str]:
+def _detect_env_channels(profile: str | None, hermes_home: Path | None = None) -> set[str]:
     """从 .env 中检测已配置的消息渠道"""
     env = _read_env_vars_for_profile(profile, hermes_home)
     configured: set[str] = set()
@@ -204,7 +205,7 @@ def get_channels(
             result[name] = channel
 
     # 补充仅通过 .env 配置的渠道
-    hermes_home = str(service.profiles.hermes_home)
+    hermes_home = service.profiles.hermes_home
     env_channels = _detect_env_channels(safe_profile, hermes_home)
     for name in env_channels:
         if name not in result:
@@ -301,7 +302,7 @@ def get_channel_env(
     service: YamlService = Depends(yaml_service),
 ):
     safe_profile = ensure_profile_access(user, profile)
-    env_svc = EnvService(hermes_home=str(service.profiles.hermes_home))
+    env_svc = EnvService(hermes_home=service.profiles.hermes_home)
     env_vars = env_svc.read_env(safe_profile)
     fields = CHANNEL_ENV_FIELDS.get(name, [])
     result: dict[str, str] = {}
@@ -314,12 +315,12 @@ def get_channel_env(
 @router.put("/{name}/env")
 def update_channel_env(
     name: str,
-    payload: dict[str, str | None],
+    payload: dict[str, Any],
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
     service: YamlService = Depends(yaml_service),
 ):
     safe_profile = ensure_profile_access(user, profile)
-    env_svc = EnvService(hermes_home=str(service.profiles.hermes_home))
+    env_svc = EnvService(hermes_home=service.profiles.hermes_home)
     env_svc.write_env(safe_profile, payload)
     return {"ok": True}

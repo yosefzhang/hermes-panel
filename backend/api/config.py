@@ -18,7 +18,7 @@ class RawConfigUpdate(BaseModel):
 
 
 def yaml_service(request: Request) -> YamlService:
-    return YamlService(request.app.state.settings.hermes_home)
+    return YamlService()
 
 
 @router.get("")

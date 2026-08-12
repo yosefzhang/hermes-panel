@@ -1,7 +1,28 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+import logging
+import os
+import sys
+import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from fastapi import Request
+
+# hermes-panel is a management tool and must not be bound to any Hermes
+# profile. Force HERMES_HOME to the current user's base Hermes directory
+# and drop any inherited profile binding so subprocess hermes calls don't
+# fall back to (or write into) the wrong profile.
+os.environ["HERMES_HOME"] = str(Path.home() / ".hermes")
+os.environ.pop("HERMES_PROFILE", None)
+
+# hermes-agent discovers bundled plugins on import and logs warnings for
+# optional platform plugins (slack-platform, wecom-platform, etc.) that
+# hermes-panel does not need. Raise the threshold to keep startup logs clean.
+logging.getLogger("hermes_cli.plugins").setLevel(logging.ERROR)
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,23 +30,89 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import (
+    audit,
     auth,
     channels,
     config,
-    env,
     gateway,
+    host_info,
     memory,
     models_config,
     plugins,
     profile_files,
+    profile_stats,
     profiles,
     skills,
+    sync,
     system,
     tokens,
     users,
 )
 from backend.config import Settings, get_settings
 from backend.db.database import init_database
+from backend.services.host_info_service import HostInfoService
+from backend.services.profile_stats_service import ProfileStatsService
+from backend.services.sync_service import SyncService
+
+
+logger = logging.getLogger(__name__)
+# Local profile stats and host metadata both target the unified `profiles`
+# table for the same (host, username, ip, profile_name) rows, so they are
+# refreshed together in a single loop to keep the two in sync within the
+# same timestamp cycle.
+_LOCAL_DATA_REFRESH_INTERVAL = 60
+
+# A typical uvicorn dev session already configures its own handlers; avoid
+# touching logging when we detect a non-empty child logger config (e.g.
+# `--reload` sets up `logging.getLogger("uvicorn")` handlers).
+_LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
+
+
+def setup_logging(settings: Settings) -> None:
+    """Configure root logger to write to a rotating file under the panel
+    config dir, while still mirroring to stderr so dev-server output is
+    not lost.
+
+    Safe to call multiple times: re-adding handlers is a no-op because we
+    tag them with a unique ``_hermes_panel_tag`` attribute and clear
+    previously tagged handlers first.
+    """
+    log_path = Path(settings.log_file_path).expanduser()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    # Remove previously installed hermes-panel handlers so re-init in dev
+    # reloads doesn't stack duplicate handlers.
+    root.handlers = [h for h in root.handlers if not getattr(h, "_hermes_panel_tag", False)]
+
+    formatter = logging.Formatter(_LOG_FORMAT)
+
+    file_handler = RotatingFileHandler(
+        log_path,
+        maxBytes=settings.log_max_bytes,
+        backupCount=settings.log_backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+    file_handler._hermes_panel_tag = True  # type: ignore[attr-defined]
+    root.addHandler(file_handler)
+
+    # Keep stderr mirror for `uvicorn` / `make dev` terminal output.
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setLevel(level)
+    stderr_handler.setFormatter(formatter)
+    stderr_handler._hermes_panel_tag = True  # type: ignore[attr-defined]
+    root.addHandler(stderr_handler)
+
+    logger.info(
+        "Logging initialised: file=%s level=%s max_bytes=%d backup_count=%d",
+        log_path, settings.log_level, settings.log_max_bytes, settings.log_backup_count,
+    )
 
 
 def create_app(settings: Settings | None = None, initialize_database: bool = True) -> FastAPI:
@@ -35,6 +122,11 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
     and want to skip the default `admin` bootstrap (or have already done it).
     """
     settings = settings or get_settings()
+
+    # Configure file logging as early as possible so startup errors land in
+    # the log file even if the lifespan handler never gets to run.
+    setup_logging(settings)
+
     if initialize_database:
         init_database(settings)
 
@@ -44,13 +136,62 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         # `initialize_database=False` is used (e.g. tests) but the app
         # still wants the schema and default admin ready before serving.
         init_database(app.state.settings)
+
+        # Start local data collection (profile stats + host metadata) in a
+        # single background loop, since both write to the same `profiles`
+        # table.
+        stats_service = ProfileStatsService(app.state.settings)
+        host_info_service = HostInfoService(app.state.settings)
+        local_data_task = asyncio.create_task(
+            _refresh_local_data(stats_service, host_info_service)
+        )
+
+        # Start sync task when configured to push data to another panel.
+        sync_service = SyncService(app.state.settings)
+        sync_task = asyncio.create_task(_run_sync_loop(sync_service))
+
         yield
+        local_data_task.cancel()
+        sync_task.cancel()
+        for task in (local_data_task, sync_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     app = FastAPI(
         title=settings.app_name,
-        lifespan=lifespan if initialize_database else None,
+        lifespan=lifespan,
     )
     app.state.settings = settings
+
+    @app.middleware("http")
+    async def request_logging_middleware(request: Request, call_next):
+        """Log every API request with method, path, status, and duration."""
+        start_time = time.time()
+        client = request.client.host if request.client else "-"
+        try:
+            response = await call_next(request)
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "API %s %s from=%s status=%d duration=%.1fms",
+                request.method,
+                request.url.path,
+                client,
+                response.status_code,
+                duration_ms,
+            )
+            return response
+        except Exception:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.exception(
+                "API %s %s from=%s FAILED after %.1fms",
+                request.method,
+                request.url.path,
+                client,
+                duration_ms,
+            )
+            raise
 
     app.add_middleware(
         CORSMiddleware,
@@ -60,13 +201,14 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         allow_headers=["*"],
     )
 
-    for router in (
+    routers = [
         auth.router,
         users.router,
         config.router,
-        env.router,
         profile_files.router,
+        profile_stats.router,
         profiles.router,
+        host_info.router,
         skills.router,
         plugins.router,
         models_config.router,
@@ -75,7 +217,11 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         tokens.router,
         system.router,
         gateway.router,
-    ):
+        sync.router,
+        audit.router,
+    ]
+
+    for router in routers:
         app.include_router(router, prefix=settings.api_prefix)
 
     dist_path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -92,6 +238,60 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
             return FileResponse(dist_path / "index.html")
 
     return app
+
+
+async def _refresh_local_data(
+    stats_service: ProfileStatsService,
+    host_info_service: HostInfoService,
+) -> None:
+    """Background loop that keeps the local rows in the `profiles` table up to date.
+
+    Profile statistics and host metadata are written to the same unified
+    `profiles` table, so both are refreshed within a single cycle to keep
+    them consistent under the same timestamp. Host metadata is refreshed
+    after profile stats so it updates the rows that stats just upserted.
+    """
+    logger.info(
+        "Local data refresh loop starting (interval=%ds)",
+        _LOCAL_DATA_REFRESH_INTERVAL,
+    )
+    try:
+        await asyncio.to_thread(stats_service.collect_local_stats)
+        await asyncio.to_thread(host_info_service.refresh_local)
+    except Exception:
+        logger.exception("Initial local data collection failed")
+
+    while True:
+        try:
+            await asyncio.sleep(_LOCAL_DATA_REFRESH_INTERVAL)
+            logger.info("Local data refresh cycle start")
+            await asyncio.to_thread(stats_service.collect_local_stats)
+            await asyncio.to_thread(host_info_service.refresh_local)
+            logger.info("Local data refresh cycle done")
+        except asyncio.CancelledError:
+            logger.info("Local data refresh loop cancelled")
+            break
+        except Exception:
+            logger.exception("Local data refresh failed")
+
+
+async def _run_sync_loop(service: SyncService) -> None:
+    """Background loop that pushes local stats to a target panel."""
+    settings = service.settings
+    if not settings.sync_enabled or not settings.sync_target_url:
+        return
+
+    while True:
+        try:
+            await asyncio.to_thread(service.push)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Sync push failed")
+        try:
+            await asyncio.sleep(settings.sync_interval)
+        except asyncio.CancelledError:
+            break
 
 
 # Module-level app for `uvicorn backend.main:app`.  Database init is

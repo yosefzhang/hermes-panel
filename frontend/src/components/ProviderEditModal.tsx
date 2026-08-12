@@ -6,11 +6,29 @@ interface Props {
   open: boolean;
   isEditing: boolean;
   editIndex: number | null;
-  initialData?: { name: string; base_url: string; key_env?: string; api_key?: string; api_mode?: string };
+  initialData?: {
+    name: string;
+    base_url: string;
+    key_env?: string;
+    api_key?: string;
+    api_mode?: string;
+    default_model?: string;
+    context_length?: number;
+    rate_limit_delay?: number;
+  };
   presets: ProviderPreset[];
   presetsLoading: boolean;
   onCancel: () => void;
-  onSubmit: (values: { name: string; base_url: string; key_env?: string; api_key?: string; api_mode?: string }) => void;
+  onSubmit: (values: {
+    name: string;
+    base_url: string;
+    key_env?: string;
+    api_key?: string;
+    api_mode?: string;
+    default_model?: string;
+    context_length?: number;
+    rate_limit_delay?: number;
+  }) => void;
 }
 
 const API_MODE_OPTIONS = [
@@ -44,6 +62,9 @@ export default function ProviderEditModal({
         key_env: initialData.key_env,
         api_key: initialData.api_key,
         api_mode: initialData.api_mode,
+        default_model: initialData.default_model,
+        context_length: initialData.context_length,
+        rate_limit_delay: initialData.rate_limit_delay,
       });
     } else if (!isEditing) {
       form.resetFields();
@@ -78,6 +99,15 @@ export default function ProviderEditModal({
               key_env: values.key_env?.trim() || '',
               api_key: values.api_key || '',
               api_mode: values.api_mode?.trim() || '',
+              default_model: values.default_model?.trim() || '',
+              context_length:
+                values.context_length === '' || values.context_length == null
+                  ? undefined
+                  : Number(values.context_length) || undefined,
+              rate_limit_delay:
+                values.rate_limit_delay === '' || values.rate_limit_delay == null
+                  ? undefined
+                  : Number(values.rate_limit_delay) || undefined,
             });
           }}
           style={{ marginTop: 8 }}
@@ -88,7 +118,7 @@ export default function ProviderEditModal({
                 type={editMode === 'preset' ? 'primary' : 'default'}
                 onClick={() => {
                   setEditMode('preset');
-                  form.setFieldsValue({ name: '', base_url: '', key_env: '', api_key: '', default_model: '' });
+                  form.setFieldsValue({ name: '', base_url: '', key_env: '', api_key: '', default_model: '', context_length: '', rate_limit_delay: '' });
                 }}
                 style={{ borderRadius: 4 }}
               >
@@ -98,7 +128,7 @@ export default function ProviderEditModal({
                 type={editMode === 'custom' ? 'primary' : 'default'}
                 onClick={() => {
                   setEditMode('custom');
-                  form.setFieldsValue({ name: '', base_url: '', key_env: '', api_key: '', default_model: '' });
+                  form.setFieldsValue({ name: '', base_url: '', key_env: '', api_key: '', default_model: '', context_length: '', rate_limit_delay: '' });
                 }}
                 style={{ borderRadius: 4 }}
               >
@@ -157,6 +187,18 @@ export default function ProviderEditModal({
               allowClear
             />
           </Form.Item>
+
+          <Form.Item name="default_model" label="默认模型">
+            <Input placeholder="例如 gpt-4o（可选）" />
+          </Form.Item>
+
+          <Form.Item name="context_length" label="上下文长度">
+            <Input type="number" min={0} placeholder="例如 128000（可选）" />
+          </Form.Item>
+
+          <Form.Item name="rate_limit_delay" label="限流延迟（秒）">
+            <Input type="number" min={0} step="0.1" placeholder="例如 0.5（可选）" />
+          </Form.Item>
         </Form>
       ) : (
         <Form
@@ -169,6 +211,15 @@ export default function ProviderEditModal({
               key_env: values.key_env?.trim() || '',
               api_key: values.api_key || '',
               api_mode: values.api_mode?.trim() || '',
+              default_model: values.default_model?.trim() || '',
+              context_length:
+                values.context_length === '' || values.context_length == null
+                  ? undefined
+                  : Number(values.context_length) || undefined,
+              rate_limit_delay:
+                values.rate_limit_delay === '' || values.rate_limit_delay == null
+                  ? undefined
+                  : Number(values.rate_limit_delay) || undefined,
             });
           }}
           style={{ marginTop: 8 }}
@@ -191,6 +242,15 @@ export default function ProviderEditModal({
               placeholder="选择 API Mode（可选）"
               allowClear
             />
+          </Form.Item>
+          <Form.Item name="default_model" label="默认模型">
+            <Input placeholder="例如 gpt-4o（可选）" />
+          </Form.Item>
+          <Form.Item name="context_length" label="上下文长度">
+            <Input type="number" min={0} placeholder="例如 128000（可选）" />
+          </Form.Item>
+          <Form.Item name="rate_limit_delay" label="限流延迟（秒）">
+            <Input type="number" min={0} step="0.1" placeholder="例如 0.5（可选）" />
           </Form.Item>
         </Form>
       )}

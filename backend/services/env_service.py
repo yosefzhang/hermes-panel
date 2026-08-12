@@ -79,7 +79,7 @@ from .profile_service import ProfileService
 
 
 class EnvService:
-    def __init__(self, hermes_home: str | Path | None = None):
+    def __init__(self, hermes_home: Path | None = None):
         self.profiles = ProfileService(hermes_home)
 
     def read_env_detailed(self, profile: str | None = None) -> dict[str, dict[str, Any]]:

@@ -9,10 +9,11 @@ from backend.db.models import User
 
 from .cli_runner import EXTRA_BIN_PATHS, find_command
 from .profile_service import ProfileService
+from .subprocess_utils import get_clean_env
 
 
 class HermesInfoService:
-    def __init__(self, hermes_home: str | Path | None = None):
+    def __init__(self, hermes_home: Path | None = None):
         self.profiles = ProfileService(hermes_home)
         self.hermes_home = self.profiles.hermes_home
 
@@ -35,7 +36,7 @@ class HermesInfoService:
             return None
         
         try:
-            env = os.environ.copy()
+            env = get_clean_env()
             
             node_path = self.find_command("node")
             if node_path:

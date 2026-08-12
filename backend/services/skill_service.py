@@ -15,6 +15,7 @@ from ruamel.yaml import YAML
 from .atomic_io import atomic_write_text
 from .cli_runner import get_profile_cmd_prefix
 from .profile_service import ProfileService
+from .subprocess_utils import get_profile_env
 
 SKILL_SOURCE_BUILTIN = "builtin"
 SKILL_SOURCE_HUB = "hub"
@@ -148,8 +149,8 @@ class SkillSummary:
 
 
 class SkillService:
-    def __init__(self, hermes_home: str | Path | None = None):
-        self.profiles = ProfileService(hermes_home)
+    def __init__(self):
+        self.profiles = ProfileService()
         self.yaml = YAML(typ="safe")
 
     # ── listing ────────────────────────────────────────────
@@ -204,7 +205,7 @@ class SkillService:
         cmd = get_profile_cmd_prefix(profile)
         if not cmd:
             return set()
-        env = os.environ.copy()
+        env = get_profile_env(profile or "default", self.profiles.hermes_home)
         env["COLUMNS"] = "400"
         try:
             result = subprocess.run(
@@ -229,7 +230,7 @@ class SkillService:
         cmd = get_profile_cmd_prefix(profile)
         if not cmd:
             return []
-        env = os.environ.copy()
+        env = get_profile_env(profile or "default", self.profiles.hermes_home)
         env["COLUMNS"] = "400"  # avoid truncation of long names
         try:
             result = subprocess.run(

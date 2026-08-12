@@ -16,11 +16,17 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 
 def monitor(request: Request) -> SystemMonitor:
-    return SystemMonitor(request.app.state.settings.control_db_path)
+    return SystemMonitor(request.app.state.settings.hermes_panel_db_path)
 
 
 def hermes_info(request: Request) -> HermesInfoService:
     return HermesInfoService(request.app.state.settings.hermes_home)
+
+
+@router.get("/health")
+def health():
+    """Public health check endpoint used by remote panels to verify reachability."""
+    return {"status": "ok"}
 
 
 @router.get("/stats")
@@ -84,7 +90,7 @@ def get_hermes_upgrade_status(
 @router.websocket("/ws/system")
 async def ws_system(websocket: WebSocket):
     await websocket.accept()
-    service = SystemMonitor(websocket.app.state.settings.control_db_path)
+    service = SystemMonitor(websocket.app.state.settings.hermes_panel_db_path)
     try:
         while True:
             await websocket.send_json(service.current_stats())

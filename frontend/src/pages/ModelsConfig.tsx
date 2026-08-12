@@ -1,27 +1,62 @@
 import { useCallback, useEffect, useState } from 'react';
+import ReactECharts from 'echarts-for-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
-  Alert, AutoComplete, Button, Card, Form, Input, InputNumber, Modal, Select, Space, Spin, Table, Tag,
-  App as AntApp, Tabs, Typography, Tooltip,
-} from 'antd';
-import PageHeader from '../components/PageHeader';
-import ProviderEditModal from '../components/ProviderEditModal';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Plus, Trash2, Pencil, Brain, ChevronDown, ChevronUp } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { apiClient } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useConfigStore } from '../store/configStore';
+import PageHeader from '../components/PageHeader';
+import PageContainer from '../components/PageContainer';
+import Loading from '../components/Loading';
+import ErrorAlert from '../components/ErrorAlert';
 
-const { Text } = Typography;
-
-// ── Types ──────────────────────────────────────────────
-
-interface ModelConfig {
-  default?: string;
-  provider?: string;
-  base_url?: string;
-  context_length?: number;
+// 导出 ProviderPreset 接口供其他组件使用
+export interface ProviderPreset {
+  id: string;
+  name: string;
+  base_url: string;
+  base_url_env_var: string;
+  transport: string;
+  auth_type: string;
+  key_env: string;
 }
 
 interface ModelsData {
-  model: ModelConfig;
+  model: {
+    default?: string;
+    provider?: string;
+    base_url?: string;
+    context_length?: number;
+  };
   auxiliary: Record<string, any>;
   fallback_providers: Array<{ provider: string; model: string }>;
   custom_providers: Array<{
@@ -30,27 +65,44 @@ interface ModelsData {
     key_env?: string;
     api_key?: string;
     api_mode?: string;
-    models?: Record<string, { context_length?: number; [key: string]: unknown }>;
-    [key: string]: unknown;
+    default_model?: string;
+    model?: string;
+    context_length?: number;
+    rate_limit_delay?: number;
+    models?: Record<string, { context_length?: number }>;
   }>;
   providers: Record<string, unknown>;
-  models: Record<string, { context_length?: number; [key: string]: unknown }>;
-  model_catalog: { enabled?: boolean; url?: string; ttl_hours?: number; providers?: Record<string, unknown> };
+  models: Record<string, { context_length?: number }>;
+  model_catalog: { enabled?: boolean; url?: string; ttl_hours?: number };
   moa: {
     default_preset?: string;
     active_preset?: string;
     presets?: Record<string, any>;
-    reference_models?: Array<{ provider: string; model: string }>;
-    aggregator?: { provider: string; model: string };
-    reference_temperature?: number;
-    aggregator_temperature?: number;
-    max_tokens?: number;
-    reference_max_tokens?: number;
-    enabled?: boolean;
   };
 }
 
-// ── Helpers ────────────────────────────────────────────
+interface ProviderInfo {
+  name: string;
+  display_name?: string;
+  source: 'main' | 'custom' | 'env';
+  base_url: string;
+  key_env: string;
+  api_key?: string;
+  api_mode?: string;
+  default_model?: string;
+  context_length?: number;
+  rate_limit_delay?: number;
+  has_key: boolean;
+}
+
+// api_mode 可选值（可留空，由 Hermes 自行处理）
+const API_MODE_OPTIONS = [
+  { value: 'chat_completions', label: 'chat_completions' },
+  { value: 'anthropic_messages', label: 'anthropic_messages' },
+  { value: 'codex_responses', label: 'codex_responses' },
+  { value: 'bedrock_converse', label: 'bedrock_converse' },
+  { value: 'codex_app_server', label: 'codex_app_server' },
+];
 
 const AUX_LABELS: Record<string, string> = {
   vision: '视觉分析',
@@ -64,162 +116,89 @@ const AUX_LABELS: Record<string, string> = {
   curator: '后台维护',
 };
 
-
-
-// ── Provider 预设类型 ──────────────────────────────────
-
-export interface ProviderPreset {
-  id: string;
-  name: string;
-  base_url: string;
-  base_url_env_var: string;
-  transport: string;
-  auth_type: string;
-  key_env: string;
-}
-
-// ── Tab: Provider 列表 ────────────────────────────────
-
-interface ProviderInfo {
-  name: string;
-  source: 'main' | 'custom' | 'env';
-  base_url: string;
-  key_env: string;
-  api_mode?: string;
-  has_key: boolean;
-}
-
-interface CustomProviderConfig {
-  name: string;
-  base_url: string;
-  key_env: string;
-  api_key: string;
-  api_mode?: string;
-  models?: Record<string, { context_length?: number; [key: string]: unknown }>;
-  [key: string]: unknown;
-}
-
-export const PROVIDER_TEMPLATES: Array<{ name: string; baseUrl: string; keyEnv: string }> = [
-  { name: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', keyEnv: 'OPENROUTER_API_KEY' },
-  { name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', keyEnv: 'DEEPSEEK_API_KEY' },
-  { name: 'groq', baseUrl: 'https://api.groq.com/openai/v1', keyEnv: 'GROQ_API_KEY' },
-  { name: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', keyEnv: 'ANTHROPIC_API_KEY' },
-  { name: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1', keyEnv: 'GOOGLE_API_KEY' },
-  { name: 'azure', baseUrl: 'https://YOUR_REGION.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT_NAME', keyEnv: 'AZURE_OPENAI_KEY' },
-  { name: 'custom', baseUrl: '', keyEnv: '' },
-];
-
 function ProvidersTab({
-  activeProfile, onReload, modelOptions,
+  activeProfile,
+  onReload,
 }: {
   activeProfile: string;
   onReload: () => void;
-  modelOptions: string[];
 }) {
-  const { message, modal } = AntApp.useApp();
+  const { toast } = useToast();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [customItems, setCustomItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [customItems, setCustomItems] = useState<CustomProviderConfig[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [providerModels, setProviderModels] = useState<Record<string, { loading: boolean; models: string[]; error?: string }>>({});
   const [editOpen, setEditOpen] = useState(false);
   const [editIndex, setEditIndex] = useState<number | null>(null);
-  const [editInitialData, setEditInitialData] = useState<{ name: string; base_url: string; key_env?: string; api_key?: string; api_mode?: string } | undefined>();
-  // 预设模式相关状态
+  const [editData, setEditData] = useState<any>(null);
+  // ── 新增流程（预设 / 自定义） ──
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<'preset' | 'custom'>('preset');
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
-  const [presetsLoading, setPresetsLoading] = useState(false);
-  const [editMode, setEditMode] = useState<'preset' | 'custom'>('preset');
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+  const [createData, setCreateData] = useState<any>({
+    provider_name: '',   // 预设模式下选的 provider
+    name: '',
+    key_env_var: '',
+    key_value: '',
+    base_url: '',
+    api_mode: '',
+    default_model: '',
+    context_length: '',
+    rate_limit_delay: '',
+  });
+  const [savingCreate, setSavingCreate] = useState(false);
+  // ── 独立 Model List 卡片（获取全部供应商模型）──
+  const [allModels, setAllModels] = useState<Array<{
+    id: string;
+    name?: string;
+    owned_by?: string;
+    context_length?: number | null;
+    output_length?: number | null;
+    created?: number | null;
+    multimodal?: boolean;
+    provider: string;
+  }>>([]);
+  const [allModelErrors, setAllModelErrors] = useState<Record<string, string>>({});
+  const [loadingAllModels, setLoadingAllModels] = useState(false);
+  const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
 
-  // Load providers from API
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: provData }, { data: modelsData }] = await Promise.all([
+      const [{ data: provData }, { data: modelsData }, { data: presetData }] = await Promise.all([
         apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', { params: { profile: activeProfile } }),
         apiClient.get<ModelsData>('/models', { params: { profile: activeProfile } }),
+        apiClient.get<{ presets: ProviderPreset[] }>('/models/provider-presets'),
       ]);
       setProviders(provData.providers ?? []);
-      setCustomItems((modelsData.custom_providers ?? []).map((p: any) => ({
+      setPresets(presetData.presets ?? []);
+      setCustomItems((modelsData.custom_providers ?? []).map((p) => ({
         ...p,
         name: p.name ?? '',
         base_url: p.base_url ?? '',
         key_env: p.key_env ?? '',
         api_key: p.api_key ?? '',
         api_mode: p.api_mode ?? '',
+        default_model: p.default_model ?? p.model ?? '',
+        model: p.model ?? '',
+        context_length: p.context_length ?? undefined,
+        rate_limit_delay: p.rate_limit_delay ?? undefined,
       })));
-    } catch { message.error('加载失败'); }
-    finally { setLoading(false); }
-  }, [activeProfile]);
-
-  useEffect(() => { loadData(); }, [loadData]);
-
-  // 加载预设列表
-  const loadPresets = useCallback(async () => {
-    console.log('loadPresets called, current presets length:', presets.length);
-    if (presets.length > 0) return; // 已加载
-    setPresetsLoading(true);
-    try {
-      const { data } = await apiClient.get<{ presets: ProviderPreset[] }>('/models/provider-presets');
-      console.log('API response:', data);
-      setPresets(data.presets ?? []);
-      console.log('Presets set, new length:', data.presets?.length);
-    } catch (err) {
-      console.error('loadPresets failed:', err);
-      // 加载失败时使用硬编码的预设
-      setPresets(PROVIDER_TEMPLATES.filter(t => t.name !== 'custom').map(t => ({
-        id: t.name,
-        name: t.name,
-        base_url: t.baseUrl,
-        base_url_env_var: '',
-        transport: 'openai_chat',
-        auth_type: 'api_key',
-        key_env: t.keyEnv,
-      })));
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '加载失败',
+      });
     } finally {
-      setPresetsLoading(false);
+      setLoading(false);
     }
-  }, [presets.length]);
-
-  const loadProviderModels = useCallback(async (providerName: string) => {
-    setProviderModels((prev) => ({
-      ...prev,
-      [providerName]: { loading: true, models: prev[providerName]?.models ?? [], error: undefined },
-    }));
-    try {
-      const { data } = await apiClient.get<{ models: string[]; error?: string }>(
-        `/models/providers/${encodeURIComponent(providerName)}/models`,
-        { params: { profile: activeProfile }, timeout: 30000 },
-      );
-      setProviderModels((prev) => ({
-        ...prev,
-        [providerName]: {
-          loading: false,
-          models: Array.isArray(data.models) ? data.models : [],
-          error: data.error || undefined,
-        },
-      }));
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      const msg = err?.code === 'ECONNABORTED' ? '获取模型超时' : (detail || '请求失败');
-      setProviderModels((prev) => ({
-        ...prev,
-        [providerName]: { loading: false, models: [], error: msg },
-      }));
-    }
-  }, [activeProfile]);
+  }, [activeProfile, toast]);
 
   useEffect(() => {
-    if (!providers.length) return;
-    providers.forEach((p) => {
-      if (!providerModels[p.name]) {
-        loadProviderModels(p.name);
-      }
-    });
-  }, [providers, providerModels, loadProviderModels]);
+    loadData();
+  }, [loadData]);
 
-  const saveCustomProviders = async (items: CustomProviderConfig[]) => {
-    setSaving(true);
+  const saveCustomProviders = async (items: any[]) => {
     try {
       const clean = items
         .filter((item) => item.name && item.base_url)
@@ -230,224 +209,689 @@ function ProvidersTab({
           key_env: item.key_env?.trim() || '',
           api_key: item.api_key || '',
           api_mode: item.api_mode?.trim() || '',
+          default_model: item.default_model?.trim() || '',
+          model: item.model ?? '',
+          context_length:
+            item.context_length === '' || item.context_length == null
+              ? undefined
+              : Number(item.context_length) || undefined,
+          rate_limit_delay:
+            item.rate_limit_delay === '' || item.rate_limit_delay == null
+              ? undefined
+              : Number(item.rate_limit_delay) || undefined,
         }));
       await apiClient.put('/models/custom_providers', clean, { params: { profile: activeProfile } });
-      message.success('已保存');
+      toast({
+        title: '成功',
+        description: '已保存',
+      });
       loadData();
-    } catch { message.error('保存失败'); }
-    finally { setSaving(false); }
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '保存失败',
+      });
+    }
   };
 
   const openCreate = () => {
     setEditIndex(null);
-    setEditInitialData(undefined);
-    setEditMode('preset');
-    setSelectedPreset(null);
-    setEditOpen(true);
-    loadPresets();
+    setCreateMode('preset');
+    setCreateData({
+      provider_name: '',
+      name: '',
+      key_env_var: '',
+      key_value: '',
+      base_url: '',
+      api_mode: '',
+      default_model: '',
+      context_length: '',
+      rate_limit_delay: '',
+    });
+    setCreateOpen(true);
   };
 
   const openEdit = (row: ProviderInfo) => {
     const idx = customItems.findIndex((c) => c.name === row.name);
     setEditIndex(idx >= 0 ? idx : null);
-    setEditInitialData(idx >= 0 ? customItems[idx] : {
+    setEditData(idx >= 0 ? customItems[idx] : {
       name: row.name,
       base_url: row.base_url,
       key_env: row.key_env,
-      api_key: '',
+      api_key: row.api_key ?? '',
       api_mode: row.api_mode || '',
+      default_model: row.default_model ?? '',
+      context_length: row.context_length ?? '',
+      rate_limit_delay: row.rate_limit_delay ?? '',
     });
     setEditOpen(true);
   };
 
-  const handleDelete = (row: ProviderInfo) => {
-    modal.confirm({
-      title: `删除 Provider: ${row.name}`,
-      content: '确认删除该 Provider 吗？这会移除对应的 Provider 配置、主模型绑定和相关环境变量。',
-      okText: '删除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await apiClient.delete(`/models/providers/${encodeURIComponent(row.name)}`, {
-            params: { profile: activeProfile },
-          });
-          message.success(`${row.name} 已删除`);
-          await loadData();
-        } catch (error: any) {
-          message.error(error?.response?.data?.detail || '删除失败');
-        }
-      },
-    });
+  const handleDelete = async (row: ProviderInfo) => {
+    try {
+      await apiClient.delete(`/models/providers/${encodeURIComponent(row.name)}`, {
+        params: { profile: activeProfile },
+      });
+      toast({
+        title: '成功',
+        description: `${row.name} 已删除`,
+      });
+      await loadData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: error?.response?.data?.detail || '删除失败',
+      });
+    }
   };
 
-  const handleEditSubmit = async (values: { name: string; base_url: string; key_env?: string; api_key?: string; api_mode?: string }) => {
-    const payload: CustomProviderConfig = {
-      name: values.name?.trim() || '',
-      base_url: values.base_url?.trim() || '',
-      key_env: values.key_env?.trim() || '',
-      api_key: values.api_key || '',
-      api_mode: values.api_mode?.trim() || '',
-    };
-    if (!payload.name || !payload.base_url) {
-      message.warning('名称和 Base URL 必填');
+  const handleEditSubmit = async () => {
+    if (!editData.name || !editData.base_url) {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '名称和基础地址必填',
+      });
       return;
     }
 
     const next = [...customItems];
     if (editIndex == null) {
-      const existingIdx = next.findIndex((item) => item.name === payload.name);
+      const existingIdx = next.findIndex((item) => item.name === editData.name);
       if (existingIdx >= 0) {
-        next[existingIdx] = { ...next[existingIdx], ...payload };
+        next[existingIdx] = { ...next[existingIdx], ...editData };
       } else {
-        next.push(payload);
+        next.push(editData);
       }
     } else {
-      next[editIndex] = { ...next[editIndex], ...payload };
+      next[editIndex] = { ...next[editIndex], ...editData };
     }
     await saveCustomProviders(next);
     setEditOpen(false);
   };
 
-  const sourceLabel = (s: string) =>
-    s === 'main' ? '主 Provider' : s === 'custom' ? '自定义' : '已配置';
+  const handleCreateSubmit = async () => {
+    if (createMode === 'preset') {
+      if (!createData.provider_name) {
+        toast({ variant: 'destructive', title: '错误', description: '请选择供应商预设' });
+        return;
+      }
+    } else {
+      if (!createData.name?.trim()) {
+        toast({ variant: 'destructive', title: '错误', description: '名称不能为空' });
+        return;
+      }
+      if (!createData.key_env_var?.trim()) {
+        toast({ variant: 'destructive', title: '错误', description: '环境变量名不能为空' });
+        return;
+      }
+      if (!createData.base_url?.trim()) {
+        toast({ variant: 'destructive', title: '错误', description: '基础地址不能为空' });
+        return;
+      }
+    }
 
-  const rows = providers;
+    const payload: any = {
+      mode: createMode,
+      key_value: createData.key_value || '',
+    };
+    if (createMode === 'preset') {
+      payload.provider_name = createData.provider_name;
+      payload.key_env_var = createData.key_env_var || ''; // 预设模式下锁定不可改，后端以 registry 默认为主
+      payload.base_url = createData.base_url?.trim() || '';
+    } else {
+      payload.name = createData.name?.trim() || '';
+      payload.key_env_var = createData.key_env_var?.trim() || '';
+      payload.base_url = createData.base_url?.trim() || '';
+      payload.api_mode = createData.api_mode?.trim() || null;
+      payload.default_model = createData.default_model?.trim() || null;
+      payload.context_length =
+        createData.context_length === '' || createData.context_length == null
+          ? null
+          : Number(createData.context_length) || null;
+      payload.rate_limit_delay =
+        createData.rate_limit_delay === '' || createData.rate_limit_delay == null
+          ? null
+          : Number(createData.rate_limit_delay) || null;
+    }
+
+    setSavingCreate(true);
+    try {
+      await apiClient.post('/models/providers', payload, { params: { profile: activeProfile } });
+      toast({ title: '成功', description: '供应商已新增' });
+      setCreateOpen(false);
+      loadData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: error?.response?.data?.detail || '新增失败',
+      });
+    } finally {
+      setSavingCreate(false);
+    }
+  };
+
+  const loadModelList = useCallback(async () => {
+    if (providers.length === 0) {
+      toast({ variant: 'destructive', title: '错误', description: '暂无可用供应商' });
+      return;
+    }
+    setLoadingAllModels(true);
+    setAllModelErrors({});
+    setAllModels([]);
+    try {
+      const results = await Promise.allSettled(
+        providers.map(async (p) => {
+          const { data } = await apiClient.get<{
+            models: Array<{
+              id: string;
+              name?: string;
+              owned_by?: string;
+              context_length?: number | null;
+              output_length?: number | null;
+              created?: number | null;
+              multimodal?: boolean;
+            }>; error?: string;
+          }>(
+            `/models/providers/${encodeURIComponent(p.name)}/models`,
+            { params: { profile: activeProfile } },
+          );
+          return { provider: p.display_name || p.name, models: data.models ?? [], error: data.error };
+        }),
+      );
+
+      const all: typeof allModels = [];
+      const errs: Record<string, string> = {};
+      results.forEach((result, idx) => {
+        const providerName = providers[idx].display_name || providers[idx].name;
+        if (result.status === 'fulfilled') {
+          const { models, error } = result.value;
+          if (error) errs[providerName] = error;
+          else if (models.length === 0) errs[providerName] = '未返回任何模型';
+          models.forEach((m) => all.push({ ...m, provider: providerName }));
+        } else {
+          errs[providerName] = '请求失败';
+        }
+      });
+      setAllModels(all);
+      setAllModelErrors(errs);
+    } catch (error: any) {
+      setAllModels([]);
+      const errMsg = error?.response?.data?.detail || '加载失败';
+      setAllModelErrors({ 请求: errMsg });
+    } finally {
+      setLoadingAllModels(false);
+    }
+  }, [activeProfile, providers, toast]);
 
   return (
-    <Spin spinning={loading}>
-      <Card
-        title="Provider 列表"
-        extra={<Button type="primary" onClick={openCreate}>新增 Provider</Button>}
-      >
-        <Table
-          rowKey="name"
-          size="small"
-          pagination={false}
-          dataSource={rows}
-          locale={{ emptyText: '暂无 Provider 配置' }}
-          columns={[
-            {
-              title: 'Provider',
-              dataIndex: 'name',
-              width: '12%',
-              minWidth: 100,
-              render: (v: string) => <Text>{v}</Text>,
-            },
-            {
-              title: 'Base URL',
-              dataIndex: 'base_url',
-              width: '22%',
-              minWidth: 160,
-              ellipsis: { showTitle: false },
-              render: (v: string, row: ProviderInfo) => (
-                <Tooltip title={v || (row.source === 'env' ? '(默认地址)' : '—')}>
-                  <Text>{v || (row.source === 'env' ? '(默认地址)' : '—')}</Text>
-                </Tooltip>
-              ),
-            },
-            {
-              title: 'API Mode',
-              dataIndex: 'api_mode',
-              width: '10%',
-              minWidth: 120,
-              render: (v?: string) => <Text>{v || '—'}</Text>,
-            },
-            {
-              title: 'Key',
-              width: '12%',
-              minWidth: 150,
-              render: (_: unknown, row: ProviderInfo) => (
-                <Text>{row.has_key ? (row.key_env || '已配置') : '未配置'}</Text>
-              ),
-            },
-            {
-              title: 'Model List',
-              width: '30%',
-              minWidth: 200,
-              render: (_: unknown, row: ProviderInfo) => {
-                const state = providerModels[row.name];
-                if (!state || state.loading) {
-                  return <Text>加载中...</Text>;
-                }
-                if (state.error) {
-                  return <Text>{state.error}</Text>;
-                }
-                if (!state.models.length) {
-                  return <Text>—</Text>;
-                }
-                return (
-                  <Tooltip title={state.models.join(', ')}>
-                    <Space wrap size={4}>
-                      {state.models.slice(0, 10).map((model) => (
-                        <Tag key={model}>{model}</Tag>
-                      ))}
-                      {state.models.length > 10 && (
-                        <Tag color="default">+{state.models.length - 10}</Tag>
-                      )}
-                    </Space>
-                  </Tooltip>
-                );
-              },
-            },
-            {
-              title: '操作',
-              width: '12%',
-              minWidth: 120,
-              render: (_: unknown, row: ProviderInfo) => (
-                <Space>
-                  <Button size="small" onClick={() => openEdit(row)}>编辑</Button>
-                  <Button size="small" danger onClick={() => handleDelete(row)}>删除</Button>
-                </Space>
-              ),
-            },
-          ]}
-        />
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>供应商列表</CardTitle>
+          <Button onClick={openCreate}>
+            <Plus className="mr-2 h-4 w-4" />
+            新增供应商
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <Loading className="py-12" />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[18%]">供应商</TableHead>
+                  <TableHead className="w-[42%]">基础地址</TableHead>
+                  <TableHead className="w-[20%]">密钥</TableHead>
+                  <TableHead className="w-[20%]">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {providers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center py-12 text-muted-foreground">
+                      暂无供应商配置
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  providers.map((row) => (
+                    <TableRow key={row.name}>
+                      <TableCell className="font-medium">{row.display_name || row.name}</TableCell>
+                      <TableCell className="truncate" title={row.base_url || (row.source === 'env' ? '(默认地址)' : '—')}>
+                        {row.base_url || (row.source === 'env' ? '(默认地址)' : '—')}
+                      </TableCell>
+                      <TableCell>{row.has_key ? (row.key_env || '已配置') : '未配置'}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={() => openEdit(row)}>
+                            <Pencil className="mr-1 h-3 w-3" />
+                            编辑
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(row)}>
+                            <Trash2 className="mr-1 h-3 w-3" />
+                            删除
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
       </Card>
 
-      <ProviderEditModal
-        open={editOpen}
-        isEditing={!!editInitialData}
-        editIndex={editIndex}
-        initialData={editInitialData}
-        presets={presets}
-        presetsLoading={presetsLoading}
-        onCancel={() => {
-          setEditOpen(false);
-          setEditInitialData(undefined);
-        }}
-        onSubmit={handleEditSubmit}
-      />
-    </Spin>
+      <Card>
+        <CardHeader>
+          <Button onClick={loadModelList} disabled={loadingAllModels || providers.length === 0}>
+            {loadingAllModels ? '获取中...' : '获取全部供应商的模型列表'}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {(() => {
+            const grouped = allModels.reduce<Record<string, typeof allModels>>((acc, m) => {
+              const key = m.provider;
+              if (!acc[key]) acc[key] = [];
+              acc[key].push(m);
+              return acc;
+            }, {});
+            const successfulProviders = Object.keys(grouped);
+            const errorProviders = Object.keys(allModelErrors);
+            const errorOnlyProviders = errorProviders.filter((p) => !grouped[p]);
+
+            if (successfulProviders.length === 0 && errorOnlyProviders.length === 0) return null;
+
+            return (
+              <div className="space-y-3">
+                {errorOnlyProviders.map((providerName) => (
+                  <Card key={`err-${providerName}`} className="border-red-300/60">
+                    <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold">{providerName}</span>
+                        <Badge variant="destructive" className="text-xs">获取失败</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0 px-4 pb-4">
+                      <p className="text-sm text-red-600">{allModelErrors[providerName]}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+
+                {successfulProviders.map((providerName) => {
+                  const models = grouped[providerName];
+                  const isExpanded = !!expandedProviders[providerName];
+                  const visibleModels = isExpanded ? models : models.slice(0, 10);
+                  const hasMore = models.length > 10;
+                  const hasError = !!allModelErrors[providerName];
+
+                  return (
+                    <Card key={providerName} className={hasError ? 'border-amber-300/60' : ''}>
+                      <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold">{providerName}</span>
+                          <Badge variant="secondary" className="text-xs">{models.length} 个模型</Badge>
+                          {hasError && (
+                            <Badge variant="outline" className="text-xs text-amber-700 border-amber-300">
+                              部分模型失败
+                            </Badge>
+                          )}
+                        </div>
+                        {hasMore && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setExpandedProviders((prev) => ({ ...prev, [providerName]: !prev[providerName] }))
+                            }
+                          >
+                            {isExpanded ? (
+                              <>收起 <ChevronUp className="ml-1 h-4 w-4" /></>
+                            ) : (
+                              <>展开全部 ({models.length}) <ChevronDown className="ml-1 h-4 w-4" /></>
+                            )}
+                          </Button>
+                        )}
+                      </CardHeader>
+                      <CardContent className="pt-0 px-4 pb-4 space-y-2">
+                        {hasError && (
+                          <p className="text-sm text-amber-600">警告: {allModelErrors[providerName]}</p>
+                        )}
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>模型 ID</TableHead>
+                              <TableHead>上下文窗口</TableHead>
+                              <TableHead>输出窗口</TableHead>
+                              <TableHead>多模态</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {visibleModels.map((m, idx) => (
+                              <TableRow key={`${m.id}-${idx}`}>
+                                <TableCell className="font-mono">{m.id}</TableCell>
+                                <TableCell>
+                                  {m.context_length ? m.context_length.toLocaleString() : '—'}
+                                </TableCell>
+                                <TableCell>
+                                  {m.output_length ? m.output_length.toLocaleString() : '—'}
+                                </TableCell>
+                                <TableCell>
+                                  {m.multimodal ? (
+                                    <Badge variant="secondary" className="text-xs">支持</Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </CardContent>
+      </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editIndex !== null ? '编辑供应商' : '新增供应商'}</DialogTitle>
+            <DialogDescription>
+              {editIndex !== null ? '修改供应商配置' : '添加新的自定义供应商'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="name">名称</Label>
+              <Input
+                id="name"
+                value={editData?.name || ''}
+                onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                placeholder="例如：my-provider"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="base_url">基础地址</Label>
+              <Input
+                id="base_url"
+                value={editData?.base_url || ''}
+                onChange={(e) => setEditData({ ...editData, base_url: e.target.value })}
+                placeholder="例如：https://api.example.com/v1"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="key_env">密钥环境变量</Label>
+              <Input
+                id="key_env"
+                value={editData?.key_env || ''}
+                onChange={(e) => setEditData({ ...editData, key_env: e.target.value })}
+                placeholder="例如：MY_API_KEY"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="api_key">API 密钥（可选）</Label>
+              <Input
+                id="api_key"
+                type="password"
+                value={editData?.api_key || ''}
+                onChange={(e) => setEditData({ ...editData, api_key: e.target.value })}
+                placeholder="直接填写 API 密钥"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="default_model">默认模型</Label>
+              <Input
+                id="default_model"
+                value={editData?.default_model || ''}
+                onChange={(e) => setEditData({ ...editData, default_model: e.target.value })}
+                placeholder="例如：gpt-4o（可选）"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="context_length">上下文长度</Label>
+              <Input
+                id="context_length"
+                type="number"
+                min={0}
+                value={editData?.context_length ?? ''}
+                onChange={(e) => setEditData({ ...editData, context_length: e.target.value })}
+                placeholder="例如：128000（可选）"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="rate_limit_delay">限流延迟（秒）</Label>
+              <Input
+                id="rate_limit_delay"
+                type="number"
+                min={0}
+                step="0.1"
+                value={editData?.rate_limit_delay ?? ''}
+                onChange={(e) => setEditData({ ...editData, rate_limit_delay: e.target.value })}
+                placeholder="例如：0.5（可选）"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleEditSubmit}>
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>新增供应商</DialogTitle>
+            <DialogDescription>支持从预设快速添加，或完全自定义。</DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 border-b">
+            <button
+              type="button"
+              onClick={() => {
+                setCreateMode('preset');
+                setCreateData({
+                  provider_name: '', name: '', key_env_var: '', key_value: '',
+                  base_url: '', api_mode: '', default_model: '', context_length: '', rate_limit_delay: '',
+                });
+              }}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                createMode === 'preset' ? 'tab-active' : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              新增预设
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreateMode('custom');
+                setCreateData({
+                  provider_name: '', name: '', key_env_var: '', key_value: '',
+                  base_url: '', api_mode: '', default_model: '', context_length: '', rate_limit_delay: '',
+                });
+              }}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                createMode === 'custom' ? 'tab-active' : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              新增自定义
+            </button>
+          </div>
+          <div className="grid gap-4 py-4">
+            {createMode === 'preset' ? (
+              <>
+                <div className="grid gap-2">
+                  <Label htmlFor="provider_name">供应商预设</Label>
+                  <Select
+                    value={createData.provider_name}
+                    onValueChange={(value) => {
+                      const preset = presets.find((p) => p.id === value);
+                      setCreateData({
+                        ...createData,
+                        provider_name: value,
+                        key_env_var: preset?.key_env ?? '',
+                        base_url: preset?.base_url ?? '',
+                      });
+                    }}
+                  >
+                    <SelectTrigger id="provider_name">
+                      <SelectValue placeholder="请选择供应商" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {presets.map((preset) => (
+                        <SelectItem key={preset.id} value={preset.id}>
+                          {preset.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="preset_base_url">基础地址</Label>
+                  <Input
+                    id="preset_base_url"
+                    value={createData.base_url}
+                    onChange={(e) => setCreateData({ ...createData, base_url: e.target.value })}
+                    placeholder="可按需覆盖预设默认地址"
+                  />
+                  <p className="text-xs text-muted-foreground">默认值来自预设，可编辑覆盖。</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="key_value">API 密钥</Label>
+                  <Input
+                    id="key_value"
+                    type="password"
+                    value={createData.key_value}
+                    onChange={(e) => setCreateData({ ...createData, key_value: e.target.value })}
+                    placeholder="填写该供应商的 API 密钥"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="grid gap-2">
+                  <Label htmlFor="name">名称</Label>
+                  <Input
+                    id="name"
+                    value={createData.name}
+                    onChange={(e) => setCreateData({ ...createData, name: e.target.value })}
+                    placeholder="例如：my-provider"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="key_env_var">环境变量名</Label>
+                  <Input
+                    id="key_env_var"
+                    value={createData.key_env_var}
+                    onChange={(e) => setCreateData({ ...createData, key_env_var: e.target.value })}
+                    placeholder="例如：MY_API_KEY"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="key_value">API 密钥</Label>
+                  <Input
+                    id="key_value"
+                    type="password"
+                    value={createData.key_value}
+                    onChange={(e) => setCreateData({ ...createData, key_value: e.target.value })}
+                    placeholder="填写 API 密钥"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="base_url">基础地址</Label>
+                  <Input
+                    id="base_url"
+                    value={createData.base_url}
+                    onChange={(e) => setCreateData({ ...createData, base_url: e.target.value })}
+                    placeholder="例如：https://api.example.com/v1"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="default_model">默认模型（可选）</Label>
+                  <Input
+                    id="default_model"
+                    value={createData.default_model}
+                    onChange={(e) => setCreateData({ ...createData, default_model: e.target.value })}
+                    placeholder="例如：gpt-4o"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="context_length">上下文长度（可选）</Label>
+                  <Input
+                    id="context_length"
+                    type="number"
+                    min={0}
+                    value={createData.context_length}
+                    onChange={(e) => setCreateData({ ...createData, context_length: e.target.value })}
+                    placeholder="例如：128000"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="rate_limit_delay">限流延迟（秒，可选）</Label>
+                  <Input
+                    id="rate_limit_delay"
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    value={createData.rate_limit_delay}
+                    onChange={(e) => setCreateData({ ...createData, rate_limit_delay: e.target.value })}
+                    placeholder="例如：0.5"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleCreateSubmit} disabled={savingCreate}>
+              {savingCreate ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
-// ── Tab: 主模型配置 ────────────────────────────────────
-
 function MainModelTab({
-  modelData, modelOptions, activeProfile, onSave, saving,
+  modelData,
+  activeProfile,
+  onSave,
 }: {
-  modelData: ModelConfig;
-  modelOptions: string[];
+  modelData: any;
   activeProfile: string;
-  onSave: (values: ModelConfig) => Promise<void>;
-  saving: boolean;
+  onSave: (values: any) => Promise<void>;
 }) {
+  const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [providerModelOptions, setProviderModelOptions] = useState<string[]>([]);
-  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
-  const [form] = Form.useForm();
-
-  const providerOptions = providers.map((p) => ({
-    label: p.name,
-    value: p.source === 'custom' ? `custom:${p.name}` : p.name,
-    baseUrl: p.base_url || '',
-  }));
+  const [saving, setSaving] = useState(false);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [modelError, setModelError] = useState('');
+  const [formData, setFormData] = useState({
+    provider: '',
+    model: '',
+    context_length: 0,
+  });
 
   const loadProviders = useCallback(async () => {
-    setProvidersLoading(true);
     try {
       const { data } = await apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
         params: { profile: activeProfile },
@@ -455,147 +899,248 @@ function MainModelTab({
       setProviders(data.providers ?? []);
     } catch {
       setProviders([]);
-    } finally {
-      setProvidersLoading(false);
     }
   }, [activeProfile]);
 
-  useEffect(() => { loadProviders(); }, [loadProviders]);
+  useEffect(() => {
+    loadProviders();
+  }, [loadProviders]);
 
-  const loadModelsForProvider = useCallback(async (providerValue: string | undefined) => {
-    if (!providerValue) {
-      setProviderModelOptions([]);
-      return;
-    }
-    const providerName = providerValue.replace(/^custom:/, '');
-    setProviderModelsLoading(true);
-    try {
-      const { data } = await apiClient.get<{ models: string[]; error?: string }>(
-        `/models/providers/${encodeURIComponent(providerName)}/models`,
-        { params: { profile: activeProfile } },
-      );
-      const list = Array.isArray(data.models) ? data.models : [];
-      setProviderModelOptions(list);
-    } catch {
-      setProviderModelOptions([]);
-    } finally {
-      setProviderModelsLoading(false);
-    }
-  }, [activeProfile]);
+  // 选择 Provider 后同步刷新该 Provider 的模型列表
+  const loadModelList = useCallback(
+    async (providerValue: string) => {
+      if (!providerValue) {
+        setModelOptions([]);
+        setModelError('');
+        return;
+      }
+      // 自定义 Provider 的 value 带 custom: 前缀，调用接口时需去掉
+      const name = providerValue.startsWith('custom:') ? providerValue.slice('custom:'.length) : providerValue;
+      setModelLoading(true);
+      setModelError('');
+      try {
+        const { data } = await apiClient.get<{ models: Array<{ id: string }>; error?: string }>(
+          `/models/providers/${encodeURIComponent(name)}/models`,
+          { params: { profile: activeProfile } },
+        );
+        setModelOptions((data.models ?? []).map((m) => m.id));
+        if (data.error) setModelError(data.error);
+      } catch (error: any) {
+        setModelOptions([]);
+        setModelError(error?.response?.data?.detail || '模型列表加载失败');
+      } finally {
+        setModelLoading(false);
+      }
+    },
+    [activeProfile],
+  );
+
+  useEffect(() => {
+    loadModelList(formData.provider);
+  }, [formData.provider, loadModelList]);
 
   const openEdit = () => {
-    const currentProvider = modelData.provider || undefined;
-    form.setFieldsValue({
-      provider: currentProvider,
-      model: modelData.default || undefined,
-      context_length: modelData.context_length ?? undefined,
+    setFormData({
+      provider: modelData.provider || '',
+      model: modelData.default || '',
+      context_length: modelData.context_length || 0,
     });
     setEditOpen(true);
-    loadModelsForProvider(currentProvider);
   };
 
-  const handleEditSave = async (values: { provider?: string; model?: string; context_length?: number }) => {
-    const selected = providerOptions.find((o) => o.value === values.provider);
-    await onSave({
-      provider: values.provider || undefined,
-      default: values.model || undefined,
-      base_url: selected?.baseUrl || undefined,
-      context_length: values.context_length ?? undefined,
-    });
-    setEditOpen(false);
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave({
+        provider: formData.provider || undefined,
+        default: formData.model || undefined,
+        context_length: formData.context_length || undefined,
+      });
+      toast({
+        title: '成功',
+        description: '主模型已保存',
+      });
+      setEditOpen(false);
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '保存失败',
+      });
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const providerOptions = providers.map((p) => ({
+    label: p.name,
+    value: p.source === 'custom' ? `custom:${p.name}` : p.name,
+  }));
 
   const selectedProvider = providerOptions.find((p) => p.value === modelData.provider);
-  const currentBaseUrl = selectedProvider?.baseUrl || modelData.base_url || '—';
-  const mainModelOptions = (providerModelOptions.length > 0 ? providerModelOptions : modelOptions)
-    .map((m) => ({ value: m }));
-
-  const summaryRows = [
-    { key: 'provider', label: 'Provider', value: modelData.provider || '—' },
-    { key: 'model', label: 'Model', value: modelData.default || '—' },
-    { key: 'base_url', label: 'Base URL', value: currentBaseUrl },
-    { key: 'context_length', label: '上下文长度', value: modelData.context_length ?? '—' },
-  ];
 
   return (
-    <Card
-      title="主模型"
-      extra={<Button onClick={openEdit}>编辑</Button>}
-    >
-      <Table
-        rowKey="key"
-        size="small"
-        bordered
-        pagination={false}
-        showHeader={false}
-        dataSource={summaryRows}
-        columns={[
-          {
-            dataIndex: 'label',
-            width: 160,
-            render: (v: string) => <Text>{v}</Text>,
-          },
-          {
-            dataIndex: 'value',
-            render: (v: string | number) => <Text>{v}</Text>,
-          },
-        ]}
-      />
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>主模型</CardTitle>
+        <Button onClick={openEdit}>
+          <Pencil className="mr-2 h-4 w-4" />
+          编辑
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableBody>
+            <TableRow>
+              <TableCell className="font-medium w-[160px]">供应商</TableCell>
+              <TableCell>{modelData.provider || '—'}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="font-medium">模型</TableCell>
+              <TableCell>{modelData.default || '—'}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="font-medium">基础地址</TableCell>
+              <TableCell>{selectedProvider?.value || modelData.base_url || '—'}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="font-medium">上下文长度</TableCell>
+              <TableCell>{modelData.context_length || '—'}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </CardContent>
 
-      <Modal
-        title="编辑主模型"
-        open={editOpen}
-        onCancel={() => setEditOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={saving}
-        okText="保存"
-        destroyOnHidden
-      >
-        <Form form={form} layout="vertical" onFinish={handleEditSave} style={{ marginTop: 8 }}>
-          <Form.Item name="provider" label="Provider" rules={[{ required: true, message: '请选择 Provider' }]}>
-            <Select
-              loading={providersLoading}
-              options={providerOptions.map((o) => ({ label: o.label, value: o.value }))}
-              placeholder="请选择 Provider"
-              onChange={(v) => {
-                form.setFieldValue('model', undefined);
-                loadModelsForProvider(v);
-              }}
-            />
-          </Form.Item>
-          <Form.Item name="model" label="Model" rules={[{ required: true, message: '请输入或选择模型' }]}>
-            <AutoComplete
-              options={mainModelOptions}
-              filterOption={(inputValue, option) =>
-                String(option?.value || '').toLowerCase().includes(inputValue.toLowerCase())
-              }
-              placeholder={providerModelsLoading ? '加载模型列表中（也可手动输入）' : '可选择或手动输入模型名'}
-            >
-              <Input />
-            </AutoComplete>
-          </Form.Item>
-          <Form.Item name="context_length" label="上下文长度">
-            <InputNumber style={{ width: '100%' }} min={1} placeholder="256000" />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑主模型</DialogTitle>
+            <DialogDescription>配置主模型的供应商和参数</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>供应商</Label>
+              <Select
+                value={formData.provider}
+                onValueChange={(value) => setFormData({ ...formData, provider: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="请选择供应商" />
+                </SelectTrigger>
+                <SelectContent>
+                  {providerOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>模型</Label>
+              <Select
+                value={formData.model}
+                onValueChange={(value) => setFormData({ ...formData, model: value })}
+                disabled={modelLoading || modelOptions.length === 0}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={modelLoading ? '模型加载中…' : '从供应商模型列表选择'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {modelOptions.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {modelError && <p className="text-xs text-amber-600">{modelError}</p>}
+            </div>
+            <div className="grid gap-2">
+              <Label>上下文长度</Label>
+              <Input
+                type="number"
+                value={formData.context_length}
+                onChange={(e) => setFormData({ ...formData, context_length: parseInt(e.target.value) || 0 })}
+                placeholder="例如：128000（可选）"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
 
-// ── Tab: 辅助模型 ──────────────────────────────────────
-
-function AuxTab({ data, activeProfile, onReload }: { data: Record<string, any>; activeProfile: string; onReload: () => void }) {
-  const { message } = AntApp.useApp();
+function AuxTab({
+  data,
+  activeProfile,
+  onReload,
+}: {
+  data: Record<string, any>;
+  activeProfile: string;
+  onReload: () => void;
+}) {
+  const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState<string | null>(null);
   const [fullData, setFullData] = useState<Record<string, any>>({});
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
-  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm();
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [modelError, setModelError] = useState('');
+  const [formData, setFormData] = useState({
+    submodule: '',
+    provider: '',
+    model: '',
+  });
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
+        params: { profile: activeProfile },
+      });
+      setProviders(data.providers ?? []);
+    } catch {
+      setProviders([]);
+    }
+  }, [activeProfile]);
+
+  const loadModelList = useCallback(
+    async (providerValue: string) => {
+      if (!providerValue) {
+        setModelOptions([]);
+        setModelError('');
+        return;
+      }
+      const name = providerValue.startsWith('custom:') ? providerValue.slice('custom:'.length) : providerValue;
+      setModelLoading(true);
+      setModelError('');
+      try {
+        const { data } = await apiClient.get<{ models: Array<{ id: string }>; error?: string }>(
+          `/models/providers/${encodeURIComponent(name)}/models`,
+          { params: { profile: activeProfile } },
+        );
+        setModelOptions((data.models ?? []).map((m) => m.id));
+        if (data.error) setModelError(data.error);
+      } catch (error: any) {
+        setModelOptions([]);
+        setModelError(error?.response?.data?.detail || '模型列表加载失败');
+      } finally {
+        setModelLoading(false);
+      }
+    },
+    [activeProfile],
+  );
 
   const openEditor = async (name: string) => {
     try {
@@ -603,242 +1148,274 @@ function AuxTab({ data, activeProfile, onReload }: { data: Record<string, any>; 
       const auxData = (fullData || {}) as Record<string, any>;
       setFullData(auxData);
       setEditName(name);
+      const provider = (auxData?.[name] ?? data[name] ?? {})?.provider || '';
+      setFormData({
+        submodule: name,
+        provider,
+        model: (auxData?.[name] ?? data[name] ?? {})?.model || '',
+      });
       setEditOpen(true);
-      form.setFieldsValue({ submodule: name, ...(auxData?.[name] ?? data[name] ?? {}) });
-      const currentProvider = (auxData?.[name] ?? data[name] ?? {})?.provider;
-      if (currentProvider) {
-        loadModelsForProvider(currentProvider);
-      }
+      await loadModelList(provider);
     } catch {
       const fallbackData = data ?? {};
       setFullData(fallbackData);
       setEditName(name);
+      const provider = (fallbackData?.[name] ?? {})?.provider || '';
+      setFormData({
+        submodule: name,
+        provider,
+        model: (fallbackData?.[name] ?? {})?.model || '',
+      });
       setEditOpen(true);
-      form.setFieldsValue({ submodule: name, ...(fallbackData?.[name] ?? {}) });
-      const currentProvider = (fallbackData?.[name] ?? {})?.provider;
-      if (currentProvider) {
-        loadModelsForProvider(currentProvider);
-      }
+      await loadModelList(provider);
     }
   };
 
-  const loadProviders = useCallback(async () => {
-    setProvidersLoading(true);
-    try {
-      const { data: res } = await apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
-        params: { profile: activeProfile },
-      });
-      setProviders(res.providers ?? []);
-    } catch {
-      setProviders([]);
-    } finally {
-      setProvidersLoading(false);
-    }
-  }, [activeProfile]);
+  useEffect(() => {
+    loadProviders();
+  }, [loadProviders]);
 
-  useEffect(() => { loadProviders(); }, [loadProviders]);
+  useEffect(() => {
+    loadModelList(formData.provider);
+  }, [formData.provider, loadModelList]);
 
-  const loadModelsForProvider = useCallback(async (providerValue: string | undefined) => {
-    if (!providerValue) {
-      return;
-    }
-    const providerName = providerValue.replace(/^custom:/, '');
-    if (providerModels[providerName]?.length) {
-      return;
-    }
-    setProviderModelsLoading(true);
-    try {
-      const { data: res } = await apiClient.get<{ models: string[] }>(
-        `/models/providers/${encodeURIComponent(providerName)}/models`,
-        { params: { profile: activeProfile } },
-      );
-      setProviderModels((prev) => ({ ...prev, [providerName]: Array.isArray(res.models) ? res.models : [] }));
-    } catch {
-      setProviderModels((prev) => ({ ...prev, [providerName]: [] }));
-    } finally {
-      setProviderModelsLoading(false);
-    }
-  }, [activeProfile, providerModels]);
+  const providerOptions = providers.map((p) => ({
+    label: p.display_name || p.name,
+    value: p.source === 'custom' ? `custom:${p.name}` : p.name,
+  }));
 
-  const handleSave = async (values: any) => {
-    const targetName = values.submodule || editName;
+  const handleSave = async () => {
+    const targetName = formData.submodule || editName;
     if (!targetName) return;
     setSaving(true);
     try {
       const aux = { ...fullData } as Record<string, any>;
-      const merged = { ...(aux[targetName] ?? {}), ...values };
-      delete merged.submodule;
+      const merged = { ...(aux[targetName] ?? {}), provider: formData.provider, model: formData.model };
       aux[targetName] = merged;
       await apiClient.put('/models/auxiliary', aux, { params: { profile: activeProfile } });
-      message.success('已保存');
+      toast({
+        title: '成功',
+        description: '已保存',
+      });
       setEditOpen(false);
       onReload();
-    } catch { message.error('保存失败'); }
-    finally { setSaving(false); }
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '保存失败',
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  // Merge known tasks with actual config: show all tasks, real config wins
   const rows = Object.entries(AUX_LABELS).map(([name, label]) => ({
     name,
     label,
     ...(data?.[name] || {}),
   }));
-  // Always show all known auxiliary modules in the selector, not just existing rows
-  const submoduleOptions = Object.entries(AUX_LABELS).map(([value, label]) => ({ label, value }));
-  // Default to first available submodule when no config exists
+
   const defaultSubmodule = rows[0]?.name || Object.keys(data ?? {})[0] || Object.keys(AUX_LABELS)[0] || '';
   const hasExisting = rows.some((r: any) => r.provider);
-  const providerOptions = providers.map((p) => ({
-    value: p.source === 'custom' ? `custom:${p.name}` : p.name,
-  }));
-  const watchedProvider = Form.useWatch('provider', form);
-  const watchedProviderName = (watchedProvider || '').replace(/^custom:/, '');
-  const modelOptions = watchedProviderName ? (providerModels[watchedProviderName] || []) : [];
 
   return (
     <>
-      <Card
-        title="辅助模型"
-        extra={<Button onClick={() => openEditor(defaultSubmodule)}>{hasExisting ? '编辑' : '添加'}</Button>}
-      >
-        <Table
-          rowKey="name"
-          dataSource={rows}
-          pagination={false}
-          size="small"
-          bordered
-          locale={{ emptyText: '暂无辅助模型配置' }}
-          columns={[
-            { title: '子模块', dataIndex: 'name', width: '20%', minWidth: 100, render: (_v: string, record: any) => <Text>{record.label || _v}</Text> },
-            { title: 'Provider', dataIndex: 'provider', width: '20%', minWidth: 100, render: (v: string) => <Text>{v || '—'}</Text> },
-            { title: 'Model', dataIndex: 'model', width: '45%', minWidth: 140, ellipsis: true, render: (v: string) => <Text>{v || '—'}</Text> },
-            { title: '超时(秒)', dataIndex: 'timeout', width: '15%', minWidth: 80, render: (v: string | number) => <Text>{v ?? '—'}</Text> },
-          ]}
-        />
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>辅助模型</CardTitle>
+          <Button onClick={() => openEditor(defaultSubmodule)}>
+            <Pencil className="mr-2 h-4 w-4" />
+            {hasExisting ? '编辑' : '添加'}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[20%]">子模块</TableHead>
+                <TableHead className="w-[20%]">供应商</TableHead>
+                <TableHead className="w-[45%]">模型</TableHead>
+                <TableHead className="w-[15%]">超时(秒)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center py-12 text-muted-foreground">
+                    暂无辅助模型配置
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((row: any) => (
+                  <TableRow key={row.name}>
+                    <TableCell className="font-medium">{row.label || row.name}</TableCell>
+                    <TableCell>{row.provider || '—'}</TableCell>
+                    <TableCell className="truncate">{row.model || '—'}</TableCell>
+                    <TableCell>{row.timeout ?? '—'}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
-      <Modal
-        title="编辑辅助模型"
-        open={editOpen}
-        onCancel={() => setEditOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={saving}
-        okText="保存"
-        width={680}
-        destroyOnHidden
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSave}
-          style={{ marginTop: 8 }}
-        >
-          <Form.Item name="submodule" label="子模块" rules={[{ required: true, message: '请选择子模块' }]}>
-            <Select
-              placeholder="请选择子模块"
-              options={submoduleOptions}
-              onChange={(v) => {
-                setEditName(v);
-                const nextValues = { submodule: v, ...(fullData?.[v] ?? data?.[v] ?? {}) };
-                form.setFieldsValue(nextValues);
-                if (nextValues.provider) {
-                  loadModelsForProvider(nextValues.provider);
-                }
-              }}
-            />
-          </Form.Item>
-          <Form.Item name="provider" label="Provider" rules={[{ required: true, message: '请选择 Provider' }]}>
-            <Select
-              loading={providersLoading}
-              placeholder="请选择 Provider"
-              options={providerOptions}
-              onChange={(v) => {
-                form.setFieldValue('model', undefined);
-                loadModelsForProvider(v);
-              }}
-            />
-          </Form.Item>
-          <Form.Item name="model" label="Model" rules={[{ required: true, message: '请选择模型' }]}>
-            <Select
-              showSearch
-              loading={providerModelsLoading}
-              placeholder="请选择模型"
-              notFoundContent={watchedProviderName ? '暂无模型' : '先选 Provider'}
-              options={modelOptions.map((m) => ({ label: m, value: m }))}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑辅助模型</DialogTitle>
+            <DialogDescription>配置辅助模型的供应商和模型</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>子模块</Label>
+              <Select
+                value={formData.submodule}
+                onValueChange={(value) => setFormData({ ...formData, submodule: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="请选择子模块" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(AUX_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>供应商</Label>
+              <Select
+                value={formData.provider}
+                onValueChange={(value) => setFormData({ ...formData, provider: value, model: '' })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="请选择供应商" />
+                </SelectTrigger>
+                <SelectContent>
+                  {providerOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>模型</Label>
+              <Select
+                value={formData.model}
+                onValueChange={(value) => setFormData({ ...formData, model: value })}
+                disabled={modelLoading || modelOptions.length === 0}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={modelLoading ? '模型加载中…' : '从供应商模型列表选择'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {modelOptions.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {modelError && <p className="text-xs text-amber-600">{modelError}</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
 
-// ── Tab: Fallback ──────────────────────────────────────
-
-function FallbackTab({ data, activeProfile, onReload }: { data: Array<{ provider: string; model: string }>; activeProfile: string; onReload: () => void }) {
-  const { message } = AntApp.useApp();
+function FallbackTab({
+  data,
+  activeProfile,
+  onReload,
+}: {
+  data: Array<{ provider: string; model: string }>;
+  activeProfile: string;
+  onReload: () => void;
+}) {
+  const { toast } = useToast();
   const [items, setItems] = useState<Array<{ key: string; provider: string; model: string }>>([]);
   const [editOpen, setEditOpen] = useState(false);
   const [editItems, setEditItems] = useState<Array<{ key: string; provider: string; model: string }>>([]);
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
-  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [providerOptions, setProviderOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, { models: string[]; loading: boolean }>>({});
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
+        params: { profile: activeProfile },
+      });
+      const list = data.providers ?? [];
+      setProviderOptions(list.map((p) => ({
+        label: p.display_name || p.name,
+        value: p.source === 'custom' ? `custom:${p.name}` : p.name,
+      })));
+    } catch {
+      setProviderOptions([]);
+    }
+  }, [activeProfile]);
+
+  const loadModelListFor = useCallback(
+    async (providerValue: string) => {
+      if (!providerValue) {
+        setModelsByProvider((prev) => ({ ...prev, [providerValue]: { models: [], loading: false } }));
+        return;
+      }
+      setModelsByProvider((prev) => ({ ...prev, [providerValue]: { models: [], loading: true } }));
+      try {
+        const name = providerValue.startsWith('custom:') ? providerValue.slice('custom:'.length) : providerValue;
+        const { data } = await apiClient.get<{ models: Array<{ id: string }>; error?: string }>(
+          `/models/providers/${encodeURIComponent(name)}/models`,
+          { params: { profile: activeProfile } },
+        );
+        setModelsByProvider((prev) => ({
+          ...prev,
+          [providerValue]: { models: (data.models ?? []).map((m) => m.id), loading: false },
+        }));
+      } catch {
+        setModelsByProvider((prev) => ({ ...prev, [providerValue]: { models: [], loading: false } }));
+      }
+    },
+    [activeProfile],
+  );
+
+  useEffect(() => {
+    loadProviders();
+  }, [loadProviders]);
+
+  useEffect(() => {
+    editItems.forEach((row) => {
+      if (row.provider && !modelsByProvider[row.provider]) {
+        loadModelListFor(row.provider);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editItems.map((r) => r.provider).join('|'), loadModelListFor]);
 
   useEffect(() => {
     setItems((data || []).map((item, i) => ({ key: `${item.provider || 'p'}-${i}`, ...item })));
   }, [data]);
 
-  const loadProviders = useCallback(async () => {
-    setProvidersLoading(true);
-    try {
-      const { data: res } = await apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
-        params: { profile: activeProfile },
-      });
-      setProviders(res.providers ?? []);
-    } catch {
-      setProviders([]);
-    } finally {
-      setProvidersLoading(false);
-    }
-  }, [activeProfile]);
-
-  useEffect(() => { loadProviders(); }, [loadProviders]);
-
-  const providerOptions = providers.map((p) => ({
-    label: p.name,
-    value: p.source === 'custom' ? `custom:${p.name}` : p.name,
-  }));
-
-  const loadModelsForProvider = useCallback(async (providerValue: string | undefined) => {
-    if (!providerValue) {
-      return;
-    }
-    const providerName = providerValue.replace(/^custom:/, '');
-    if (providerModels[providerName]?.length) {
-      return;
-    }
-    setProviderModelsLoading(true);
-    try {
-      const { data: res } = await apiClient.get<{ models: string[] }>(
-        `/models/providers/${encodeURIComponent(providerName)}/models`,
-        { params: { profile: activeProfile } },
-      );
-      setProviderModels((prev) => ({ ...prev, [providerName]: Array.isArray(res.models) ? res.models : [] }));
-    } catch {
-      setProviderModels((prev) => ({ ...prev, [providerName]: [] }));
-    } finally {
-      setProviderModelsLoading(false);
-    }
-  }, [activeProfile, providerModels]);
-
   const openEdit = () => {
     const cloned = items.map((i) => ({ ...i }));
     setEditItems(cloned.length ? cloned : [{ key: `new-${Date.now()}`, provider: '', model: '' }]);
     setEditOpen(true);
-    cloned.forEach((row) => {
-      if (row.provider) loadModelsForProvider(row.provider);
-    });
   };
 
   const addEditRow = () => {
@@ -850,7 +1427,16 @@ function FallbackTab({ data, activeProfile, onReload }: { data: Array<{ provider
   };
 
   const updateEditRow = (key: string, patch: Partial<{ provider: string; model: string }>) => {
-    setEditItems((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setEditItems((prev) => prev.map((r) => {
+      if (r.key !== key) return r;
+      const merged = { ...r, ...patch };
+      if (patch.provider !== undefined && patch.provider !== r.provider) {
+        // Reset model when provider changes
+        merged.model = '';
+        loadModelListFor(patch.provider);
+      }
+      return merged;
+    }));
   };
 
   const handleSave = async () => {
@@ -860,11 +1446,18 @@ function FallbackTab({ data, activeProfile, onReload }: { data: Array<{ provider
         .map((r) => ({ provider: r.provider || '', model: r.model || '' }))
         .filter((i) => i.provider || i.model);
       await apiClient.put('/models/fallback_providers', payload, { params: { profile: activeProfile } });
-      message.success('已保存');
+      toast({
+        title: '成功',
+        description: '已保存',
+      });
       setEditOpen(false);
       onReload();
     } catch {
-      message.error('保存失败');
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '保存失败',
+      });
     } finally {
       setSaving(false);
     }
@@ -872,465 +1465,700 @@ function FallbackTab({ data, activeProfile, onReload }: { data: Array<{ provider
 
   return (
     <>
-      <Card
-        title="Fallback Providers"
-        extra={<Button onClick={openEdit}>编辑</Button>}
-      >
-        {items.length === 0 ? (
-          <Text>暂未配置 Fallback Providers</Text>
-        ) : (
-          <Table
-            rowKey="key"
-            size="small"
-            bordered
-            pagination={false}
-            dataSource={items}
-            columns={[
-              { title: 'Provider', dataIndex: 'provider', render: (v: string) => <Text>{v || '—'}</Text> },
-              { title: 'Model', dataIndex: 'model', render: (v: string) => <Text>{v || '—'}</Text> },
-            ]}
-          />
-        )}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>回退模型</CardTitle>
+          <Button onClick={openEdit}>
+            <Pencil className="mr-2 h-4 w-4" />
+            编辑
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {items.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              暂未配置回退模型
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>供应商</TableHead>
+                  <TableHead>模型</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => (
+                  <TableRow key={item.key}>
+                    <TableCell>{item.provider || '—'}</TableCell>
+                    <TableCell>{item.model || '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
       </Card>
 
-      <Modal
-        title="编辑 Fallback"
-        open={editOpen}
-        onCancel={() => setEditOpen(false)}
-        onOk={handleSave}
-        confirmLoading={saving}
-        okText="保存"
-        width={760}
-        destroyOnHidden
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: 13 }}>配置多个 Fallback Provider，按顺序依次尝试。</Text>
-            <Button size="small" onClick={addEditRow}>新增一行</Button>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '240px 1fr 64px',
-              gap: 8,
-              padding: '0 12px',
-            }}
-          >
-            <Text type="secondary">Provider</Text>
-            <Text type="secondary">Model</Text>
-            <Text type="secondary" style={{ textAlign: 'center' }}>操作</Text>
-          </div>
-
-          {editItems.map((row) => {
-            const providerName = (row.provider || '').replace(/^custom:/, '');
-            const models = providerName ? (providerModels[providerName] || []) : [];
-            return (
-              <div
-                key={row.key}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '240px 1fr 64px',
-                  gap: 8,
-                  alignItems: 'center',
-                  border: '1px solid #f0f0f0',
-                  borderRadius: 8,
-                  padding: 10,
-                  background: '#fafafa',
-                }}
-              >
-                <Select
-                  style={{ width: '100%' }}
-                  loading={providersLoading}
-                  placeholder="请选择 Provider"
-                  value={row.provider || undefined}
-                  options={providerOptions}
-                  onChange={(v) => {
-                    updateEditRow(row.key, { provider: v, model: '' });
-                    loadModelsForProvider(v);
-                  }}
-                />
-                <Select
-                  style={{ width: '100%' }}
-                  showSearch
-                  loading={providerModelsLoading && providerName.length > 0}
-                  placeholder="请选择模型"
-                  value={row.model || undefined}
-                  notFoundContent={providerName ? '暂无模型' : '先选 Provider'}
-                  options={models.map((m) => ({ label: m, value: m }))}
-                  onChange={(v) => updateEditRow(row.key, { model: v })}
-                />
-                <Button size="small" danger onClick={() => removeEditRow(row.key)} style={{ justifySelf: 'center' }}>删除</Button>
-              </div>
-            );
-          })}
-          {editItems.length === 0 && (
-            <div style={{ border: '1px dashed #d9d9d9', borderRadius: 8, padding: 20, textAlign: 'center' }}>
-              <Text type="secondary">暂无配置，点击“新增一行”添加。</Text>
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>编辑回退模型</DialogTitle>
+            <DialogDescription>配置多个回退模型，按顺序依次尝试</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="flex justify-end items-center">
+              <Button variant="outline" size="sm" onClick={addEditRow}>
+                <Plus className="mr-1 h-3 w-3" />
+                新增一行
+              </Button>
             </div>
-          )}
-        </div>
-      </Modal>
+
+            <div className="grid grid-cols-[240px_1fr_64px] gap-2 px-3">
+              <Label className="text-muted-foreground">供应商</Label>
+              <Label className="text-muted-foreground">模型</Label>
+              <Label className="text-muted-foreground text-center">操作</Label>
+            </div>
+
+            {editItems.map((row) => {
+              const providerState = modelsByProvider[row.provider];
+              const rowModelOptions = providerState?.models ?? [];
+              const rowModelLoading = providerState?.loading ?? false;
+              return (
+                <div
+                  key={row.key}
+                  className="grid grid-cols-[240px_1fr_64px] gap-2 items-center border rounded-lg p-3 bg-muted/50"
+                >
+                  <Select
+                    value={row.provider}
+                    onValueChange={(value) => updateEditRow(row.key, { provider: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="请选择供应商" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {providerOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={row.model}
+                    onValueChange={(value) => updateEditRow(row.key, { model: value })}
+                    disabled={rowModelLoading || rowModelOptions.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={rowModelLoading ? '加载中…' : '请选择模型'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {rowModelOptions.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => removeEditRow(row.key)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              );
+            })}
+
+            {editItems.length === 0 && (
+              <div className="border-2 border-dashed rounded-lg p-8 text-center text-muted-foreground">
+                暂无配置，点击"新增一行"添加。
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
 
-// ── Tab: MoA (Mixture of Agents) ──────────────────────────────────────
-
-function MoATab({ data, activeProfile, onReload }: { data: any; activeProfile: string; onReload: () => void }) {
-  const { message } = AntApp.useApp();
+function MoATab({
+  data,
+  activeProfile,
+  onReload,
+}: {
+  data: any;
+  activeProfile: string;
+  onReload: () => void;
+}) {
+  const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
   const [editPreset, setEditPreset] = useState<string>('default');
-  const [form] = Form.useForm();
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(false);
-  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
-  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [aggregatorModelOptions, setAggregatorModelOptions] = useState<string[]>([]);
+  const [aggregatorModelLoading, setAggregatorModelLoading] = useState(false);
+  const [refModelOptionsMap, setRefModelOptionsMap] = useState<Record<number, string[]>>({});
+  const [refModelsLoadingMap, setRefModelsLoadingMap] = useState<Record<number, boolean>>({});
+  const [formData, setFormData] = useState({
+    aggregator: { provider: '', model: '' },
+    reference_models: [] as Array<{
+      provider: string;
+      model: string;
+      base_url?: string;
+      key_env?: string;
+      api_mode?: string;
+    }>,
+    reference_temperature: 0.6,
+    aggregator_temperature: 0.4,
+    max_tokens: 4096,
+    reference_max_tokens: 0,
+  });
 
-  // 加载 providers
-  const loadProviders = useCallback(async () => {
-    setProvidersLoading(true);
+  const presets = data?.presets || {};
+  const presetNames = Object.keys(presets);
+  const activePresetName = data?.default_preset || 'default';
+
+  const handleChangeDefaultPreset = async (name: string) => {
     try {
-      const { data: res } = await apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
+      await apiClient.put(
+        '/models/moa',
+        { ...data, default_preset: name },
+        { params: { profile: activeProfile } },
+      );
+      toast({ title: '成功', description: `默认预设已切换为 ${name}` });
+      onReload();
+    } catch {
+      toast({ variant: 'destructive', title: '错误', description: '切换默认预设失败' });
+    }
+  };
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
         params: { profile: activeProfile },
       });
-      setProviders(res.providers ?? []);
+      setProviders(data.providers ?? []);
     } catch {
       setProviders([]);
-    } finally {
-      setProvidersLoading(false);
     }
   }, [activeProfile]);
 
-  useEffect(() => { loadProviders(); }, [loadProviders]);
+  const loadModelList = useCallback(
+    async (providerValue: string): Promise<string[]> => {
+      if (!providerValue) return [];
+      const name = providerValue.startsWith('custom:') ? providerValue.slice('custom:'.length) : providerValue;
+      try {
+        const { data } = await apiClient.get<{ models: Array<{ id: string }>; error?: string }>(
+          `/models/providers/${encodeURIComponent(name)}/models`,
+          { params: { profile: activeProfile } },
+        );
+        return (data.models ?? []).map((m) => m.id);
+      } catch {
+        return [];
+      }
+    },
+    [activeProfile],
+  );
 
-  // 加载指定 provider 的模型列表
-  const loadModelsForProvider = useCallback(async (providerValue: string | undefined) => {
-    if (!providerValue) return;
-    const providerName = providerValue.replace(/^custom:/, '');
-    if (providerModels[providerName]?.length) return;
-    
-    setProviderModelsLoading(true);
-    try {
-      const { data: res } = await apiClient.get<{ models: string[] }>(
-        `/models/providers/${encodeURIComponent(providerName)}/models`,
-        { params: { profile: activeProfile } },
-      );
-      setProviderModels((prev) => ({ ...prev, [providerName]: Array.isArray(res.models) ? res.models : [] }));
-    } catch {
-      setProviderModels((prev) => ({ ...prev, [providerName]: [] }));
-    } finally {
-      setProviderModelsLoading(false);
+  const providerOptions = providers.map((p) => ({
+    label: p.display_name || p.name,
+    value: p.source === 'custom' ? `custom:${p.name}` : p.name,
+  }));
+
+  useEffect(() => {
+    loadProviders();
+  }, [loadProviders]);
+
+  // Load aggregator model list when its provider changes
+  useEffect(() => {
+    if (!editOpen) return;
+    const provider = formData.aggregator.provider;
+    if (!provider) {
+      setAggregatorModelOptions([]);
+      return;
     }
-  }, [activeProfile, providerModels]);
+    setAggregatorModelLoading(true);
+    loadModelList(provider).then((opts) => {
+      setAggregatorModelOptions(opts);
+      setAggregatorModelLoading(false);
+    });
+  }, [formData.aggregator.provider, editOpen, loadModelList]);
 
-  // 获取当前激活的 preset
-  const activePresetName = data?.active_preset || data?.default_preset || 'default';
-  const activePreset = data?.presets?.[activePresetName] || {};
-  
-  // 显示信息
-  const refModels = activePreset.reference_models || [];
-  const aggregator = activePreset.aggregator || {};
-  const refTemp = activePreset.reference_temperature ?? 0.6;
-  const aggTemp = activePreset.aggregator_temperature ?? 0.4;
-  const maxTokens = activePreset.max_tokens ?? 4096;
-  const refMaxTokens = activePreset.reference_max_tokens;
-  const enabled = activePreset.enabled ?? true;
+  // Load reference model lists when providers change
+  useEffect(() => {
+    if (!editOpen) return;
+    formData.reference_models.forEach((ref, idx) => {
+      if (!ref.provider) return;
+      setRefModelsLoadingMap((prev) => ({ ...prev, [idx]: true }));
+      loadModelList(ref.provider).then((opts) => {
+        setRefModelOptionsMap((prev) => ({ ...prev, [idx]: opts }));
+        setRefModelsLoadingMap((prev) => ({ ...prev, [idx]: false }));
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.reference_models.map((r) => r.provider).join('|'), editOpen, loadModelList]);
 
-  // 打开编辑弹窗
   const openEdit = (presetName: string) => {
     setEditPreset(presetName);
     const preset = data?.presets?.[presetName] || {};
-    form.setFieldsValue({
-      enabled: preset.enabled ?? true,
+    setFormData({
       aggregator: preset.aggregator || { provider: '', model: '' },
-      reference_models: preset.reference_models || [],
+      reference_models: (preset.reference_models || []).map((r: any) => ({
+        provider: r.provider || '',
+        model: r.model || '',
+        base_url: r.base_url || '',
+        key_env: r.key_env || '',
+        api_mode: r.api_mode || '',
+      })),
       reference_temperature: preset.reference_temperature ?? 0.6,
       aggregator_temperature: preset.aggregator_temperature ?? 0.4,
       max_tokens: preset.max_tokens ?? 4096,
-      reference_max_tokens: preset.reference_max_tokens,
+      reference_max_tokens: preset.reference_max_tokens || 0,
     });
+    setRefModelOptionsMap({});
     setEditOpen(true);
-    
-    // 预加载已配置 provider 的模型列表
-    if (preset.aggregator?.provider) {
-      loadModelsForProvider(preset.aggregator.provider);
-    }
-    (preset.reference_models || []).forEach((ref: any) => {
-      if (ref.provider) loadModelsForProvider(ref.provider);
+  };
+
+  const updateRefModel = (idx: number, patch: Partial<{ provider: string; model: string }>) => {
+    setFormData((prev) => {
+      const newRefs = [...prev.reference_models];
+      const merged = { ...newRefs[idx], ...patch };
+      if (patch.provider !== undefined && patch.provider !== newRefs[idx].provider) {
+        merged.model = '';
+        setRefModelOptionsMap((prevMap) => ({ ...prevMap, [idx]: [] }));
+        setRefModelsLoadingMap((prev) => ({ ...prev, [idx]: true }));
+        loadModelList(patch.provider).then((opts) => {
+          setRefModelOptionsMap((prevMap) => ({ ...prevMap, [idx]: opts }));
+          setRefModelsLoadingMap((prev) => ({ ...prev, [idx]: false }));
+        });
+      }
+      newRefs[idx] = merged;
+      return { ...prev, reference_models: newRefs };
     });
   };
 
-  // 保存 MoA 配置
-  const handleSave = async (values: any) => {
+  const getRefModelOptions = (idx: number) => refModelOptionsMap[idx] ?? [];
+  const isRefLoading = (idx: number) => refModelsLoadingMap[idx] ?? false;
+
+  const handleSave = async () => {
     setSaving(true);
     try {
       const updatedPresets = { ...data?.presets };
+      const presetData: any = {
+        aggregator: formData.aggregator,
+        reference_models: formData.reference_models,
+        reference_temperature: formData.reference_temperature,
+        aggregator_temperature: formData.aggregator_temperature,
+        max_tokens: formData.max_tokens,
+        reference_max_tokens: formData.reference_max_tokens,
+      };
+      // Strip empty values
+      Object.keys(presetData).forEach((k) => {
+        const v = presetData[k];
+        if (v === '' || v === null || v === undefined || (Array.isArray(v) && v.length === 0)) {
+          delete presetData[k];
+        }
+      });
       updatedPresets[editPreset] = {
         ...updatedPresets[editPreset],
-        enabled: values.enabled,
-        aggregator: values.aggregator,
-        reference_models: values.reference_models,
-        reference_temperature: values.reference_temperature,
-        aggregator_temperature: values.aggregator_temperature,
-        max_tokens: values.max_tokens,
-        reference_max_tokens: values.reference_max_tokens,
+        ...presetData,
       };
-      
+
       await apiClient.put('/models/moa', {
         ...data,
         presets: updatedPresets,
       }, { params: { profile: activeProfile } });
-      
-      message.success('MoA 配置已保存');
+
+      toast({
+        title: '成功',
+        description: 'MoA 配置已保存',
+      });
       setEditOpen(false);
       onReload();
     } catch {
-      message.error('保存失败');
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: '保存失败',
+      });
     } finally {
       setSaving(false);
     }
   };
 
-  const providerOptions = providers.map((p) => ({
-    label: p.name,
-    value: p.source === 'custom' ? `custom:${p.name}` : p.name,
-  }));
+  const renderPresetCard = (presetName: string) => {
+    const preset = presets[presetName] || {};
+    const refModels = (preset.reference_models || []) as Array<{
+      provider: string;
+      model: string;
+      base_url?: string;
+      key_env?: string;
+      api_mode?: string;
+    }>;
+    const aggregator = preset.aggregator || {};
+    const refTemp = preset.reference_temperature ?? 0.6;
+    const aggTemp = preset.aggregator_temperature ?? 0.4;
+    const maxTokens = preset.max_tokens ?? 4096;
+    const refMaxTokens = preset.reference_max_tokens;
+
+    return (
+      <Card key={presetName}>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CardTitle>{presetName}</CardTitle>
+          </div>
+          <Button size="sm" onClick={() => openEdit(presetName)}>
+            <Pencil className="mr-2 h-3 w-3" />
+            编辑
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* 模型配置 */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground/80 border-b pb-1">
+              模型配置
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[10%]">类型</TableHead>
+                  <TableHead className="w-[15%]">供应商</TableHead>
+                  <TableHead className="w-[20%]">模型</TableHead>
+                  <TableHead className="w-[25%]">基础地址</TableHead>
+                  <TableHead className="w-[15%]">密钥变量</TableHead>
+                  <TableHead className="w-[15%]">API 模式</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell>聚合模型</TableCell>
+                  <TableCell className="font-medium">{aggregator.provider || '—'}</TableCell>
+                  <TableCell>{aggregator.model || '—'}</TableCell>
+                  <TableCell>{aggregator.base_url || '—'}</TableCell>
+                  <TableCell>{aggregator.key_env || '—'}</TableCell>
+                  <TableCell>{aggregator.api_mode || '—'}</TableCell>
+                </TableRow>
+                {refModels.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-4">
+                      未配置参考模型
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  refModels.map((ref: any, idx: number) => (
+                    <TableRow key={`ref-${idx}`}>
+                      <TableCell>参考模型</TableCell>
+                      <TableCell className="font-medium">{ref.provider || '—'}</TableCell>
+                      <TableCell>{ref.model || '—'}</TableCell>
+                      <TableCell>{ref.base_url || '—'}</TableCell>
+                      <TableCell>{ref.key_env || '—'}</TableCell>
+                      <TableCell>{ref.api_mode || '—'}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* 参数配置 */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground/80 border-b pb-1">
+              参数配置
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>参考模型温度</TableHead>
+                  <TableHead>聚合模型温度</TableHead>
+                  <TableHead>聚合 Max Tokens</TableHead>
+                  <TableHead>参考 Max Tokens</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="font-mono">{refTemp}</TableCell>
+                  <TableCell className="font-mono">{aggTemp}</TableCell>
+                  <TableCell className="font-mono">{maxTokens}</TableCell>
+                  <TableCell className="font-mono">{refMaxTokens ?? '无限制'}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <>
-      <Card
-        title="MoA (Mixture of Agents)"
-        extra={
-          <Space>
-            <Tag color={enabled ? 'green' : 'default'}>{enabled ? '已启用' : '已禁用'}</Tag>
-            <Button onClick={() => openEdit(activePresetName)}>
-              编辑预设
-            </Button>
-          </Space>
-        }
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <div>
-            <Text strong>当前预设：</Text>
-            <Tag color="blue">{activePresetName}</Tag>
-          </div>
-          
-          <div>
-            <Text strong>聚合模型 (Aggregator)：</Text>
-            <div style={{ marginTop: 8 }}>
-              <Tag color="purple">{aggregator.provider || '未配置'}</Tag>
-              <Tag>{aggregator.model || '未配置'}</Tag>
+      <div className="space-y-4">
+        {/* 默认预设卡片 */}
+        <Card>
+          <CardContent className="flex items-center justify-between gap-4 pt-5">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">当前默认预设：</span>
+              <span className="font-medium font-mono">{activePresetName}</span>
             </div>
-          </div>
-
-          <div>
-            <Text strong>参考模型 (Reference Models)：</Text>
-            <div style={{ marginTop: 8 }}>
-              {refModels.length === 0 ? (
-                <Text type="secondary">未配置参考模型</Text>
-              ) : (
-                <Space wrap>
-                  {refModels.map((ref: any, idx: number) => (
-                    <Tag key={idx} color="cyan">
-                      {ref.provider}: {ref.model}
-                    </Tag>
-                  ))}
-                </Space>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <div>
-              <Text strong>参考模型温度：</Text>
-              <div><Text code>{refTemp}</Text></div>
-            </div>
-            <div>
-              <Text strong>聚合模型温度：</Text>
-              <div><Text code>{aggTemp}</Text></div>
-            </div>
-            <div>
-              <Text strong>聚合模型 Max Tokens：</Text>
-              <div><Text code>{maxTokens}</Text></div>
-            </div>
-            <div>
-              <Text strong>参考模型 Max Tokens：</Text>
-              <div><Text code>{refMaxTokens ?? '无限制'}</Text></div>
-            </div>
-          </div>
-
-          {data?.presets && Object.keys(data.presets).length > 1 && (
-            <div>
-              <Text strong>所有预设：</Text>
-              <div style={{ marginTop: 8 }}>
-                <Space wrap>
-                  {Object.keys(data.presets).map((name) => (
-                    <Tag
-                      key={name}
-                      color={name === activePresetName ? 'blue' : 'default'}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => openEdit(name)}
-                    >
+            <div className="flex items-center gap-2">
+              <Select
+                value={activePresetName}
+                onValueChange={(val) => handleChangeDefaultPreset(val)}
+              >
+                <SelectTrigger className="w-45">
+                  <SelectValue placeholder="选择默认预设" />
+                </SelectTrigger>
+                <SelectContent>
+                  {presetNames.map((name) => (
+                    <SelectItem key={name} value={name}>
                       {name}
-                    </Tag>
+                    </SelectItem>
                   ))}
-                </Space>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {presetNames.length === 0 && (
+          <Card>
+            <CardContent className="text-sm text-muted-foreground p-6 text-center">
+              暂无 MoA 预设配置
+            </CardContent>
+          </Card>
+        )}
+        {presetNames.map((name) => renderPresetCard(name))}
+      </div>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>编辑多智能体预设：{editPreset}</DialogTitle>
+            <DialogDescription>配置多智能体的聚合模型和参考模型</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>聚合模型</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-2">
+                  <Label>供应商</Label>
+                  <Select
+                    value={formData.aggregator.provider}
+                    onValueChange={(value) =>
+                      setFormData({
+                        ...formData,
+                        aggregator: { ...formData.aggregator, provider: value, model: '' },
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="请选择供应商" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {providerOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>模型</Label>
+                  <Select
+                    value={formData.aggregator.model}
+                    onValueChange={(value) =>
+                      setFormData({
+                        ...formData,
+                        aggregator: { ...formData.aggregator, model: value },
+                      })
+                    }
+                    disabled={aggregatorModelLoading || aggregatorModelOptions.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={aggregatorModelLoading ? '加载中…' : '请选择模型'}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {aggregatorModelOptions.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>参考模型</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4">
+                  {formData.reference_models.map((ref, idx) => (
+                    <div key={idx} className="flex gap-2 items-end">
+                      <div className="flex-1 grid gap-2">
+                        <Label>供应商</Label>
+                        <Select
+                          value={ref.provider}
+                          onValueChange={(value) => updateRefModel(idx, { provider: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="请选择供应商" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {providerOptions.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex-1 grid gap-2">
+                        <Label>模型</Label>
+                        <Select
+                          value={ref.model}
+                          onValueChange={(value) => updateRefModel(idx, { model: value })}
+                          disabled={isRefLoading(idx) || getRefModelOptions(idx).length === 0}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={isRefLoading(idx) ? '加载中…' : '请选择模型'}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getRefModelOptions(idx).map((m) => (
+                              <SelectItem key={m} value={m}>
+                                {m}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setFormData((prev) => ({
+                            ...prev,
+                            reference_models: prev.reference_models.filter((_, i) => i !== idx),
+                          }));
+                          setRefModelOptionsMap((prev) => {
+                            const next: Record<number, string[]> = {};
+                            Object.keys(prev).forEach((k) => {
+                              const key = parseInt(k);
+                              if (key < idx) next[key] = prev[key];
+                              else if (key > idx) next[key - 1] = prev[key];
+                            });
+                            return next;
+                          });
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      reference_models: [
+                        ...prev.reference_models,
+                        { provider: '', model: '' },
+                      ],
+                    }));
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  添加参考模型
+                </Button>
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label>参考模型温度</Label>
+                <Input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="2"
+                  value={formData.reference_temperature}
+                  onChange={(e) =>
+                    setFormData({ ...formData, reference_temperature: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>聚合模型温度</Label>
+                <Input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="2"
+                  value={formData.aggregator_temperature}
+                  onChange={(e) =>
+                    setFormData({ ...formData, aggregator_temperature: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>聚合 Max Tokens</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={formData.max_tokens}
+                  onChange={(e) => setFormData({ ...formData, max_tokens: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>参考 Max Tokens</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={formData.reference_max_tokens}
+                  onChange={(e) =>
+                    setFormData({ ...formData, reference_max_tokens: parseInt(e.target.value) || 0 })
+                  }
+                  placeholder="0 表示无限制"
+                />
               </div>
             </div>
-          )}
-        </Space>
-      </Card>
-
-      <Modal
-        title={`编辑 MoA 预设: ${editPreset}`}
-        open={editOpen}
-        onCancel={() => setEditOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={saving}
-        okText="保存"
-        width={800}
-        destroyOnHidden
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSave}
-          style={{ marginTop: 16 }}
-        >
-          <Form.Item name="enabled" label="启用状态" valuePropName="checked">
-            <Select
-              options={[
-                { label: '启用', value: true },
-                { label: '禁用', value: false },
-              ]}
-            />
-          </Form.Item>
-
-          <Card size="small" title="聚合模型 (Aggregator)" style={{ marginBottom: 16 }}>
-            <Form.Item name={['aggregator', 'provider']} label="Provider" rules={[{ required: true }]}>
-              <Select
-                loading={providersLoading}
-                placeholder="请选择 Provider"
-                options={providerOptions}
-                onChange={(v) => {
-                  form.setFieldValue(['aggregator', 'model'], undefined);
-                  loadModelsForProvider(v);
-                }}
-              />
-            </Form.Item>
-            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.aggregator?.provider !== cur.aggregator?.provider}>
-              {({ getFieldValue }) => {
-                const provider = getFieldValue(['aggregator', 'provider']);
-                const providerName = (provider || '').replace(/^custom:/, '');
-                const models = providerName ? (providerModels[providerName] || []) : [];
-                return (
-                  <Form.Item name={['aggregator', 'model']} label="Model" rules={[{ required: true }]}>
-                    <Select
-                      showSearch
-                      loading={providerModelsLoading && providerName.length > 0}
-                      placeholder="请选择模型"
-                      notFoundContent={providerName ? '暂无模型' : '先选 Provider'}
-                      options={models.map((m) => ({ label: m, value: m }))}
-                    />
-                  </Form.Item>
-                );
-              }}
-            </Form.Item>
-          </Card>
-
-          <Card size="small" title="参考模型 (Reference Models)" style={{ marginBottom: 16 }}>
-            <Form.List name="reference_models">
-              {(fields, { add, remove }) => (
-                <>
-                  {fields.map(({ key, name, ...restField }) => (
-                    <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
-                      <Form.Item
-                        {...restField}
-                        name={[name, 'provider']}
-                        rules={[{ required: true, message: '请选择 Provider' }]}
-                      >
-                        <Select
-                          style={{ width: 180 }}
-                          loading={providersLoading}
-                          placeholder="Provider"
-                          options={providerOptions}
-                          onChange={(v) => {
-                            const refs = form.getFieldValue('reference_models') || [];
-                            refs[name].model = undefined;
-                            form.setFieldsValue({ reference_models: refs });
-                            loadModelsForProvider(v);
-                          }}
-                        />
-                      </Form.Item>
-                      <Form.Item noStyle shouldUpdate={(prev, cur) => {
-                        const prevRef = prev.reference_models?.[name];
-                        const curRef = cur.reference_models?.[name];
-                        return prevRef?.provider !== curRef?.provider;
-                      }}>
-                        {({ getFieldValue }) => {
-                          const refs = getFieldValue('reference_models') || [];
-                          const provider = refs[name]?.provider;
-                          const providerName = (provider || '').replace(/^custom:/, '');
-                          const models = providerName ? (providerModels[providerName] || []) : [];
-                          return (
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'model']}
-                              rules={[{ required: true, message: '请选择模型' }]}
-                            >
-                              <Select
-                                showSearch
-                                style={{ width: 240 }}
-                                loading={providerModelsLoading && providerName.length > 0}
-                                placeholder="Model"
-                                notFoundContent={providerName ? '暂无模型' : '先选 Provider'}
-                                options={models.map((m) => ({ label: m, value: m }))}
-                              />
-                            </Form.Item>
-                          );
-                        }}
-                      </Form.Item>
-                      <Button type="text" danger onClick={() => remove(name)}>删除</Button>
-                    </Space>
-                  ))}
-                  <Form.Item>
-                    <Button type="dashed" onClick={() => add()} block>
-                      添加参考模型
-                    </Button>
-                  </Form.Item>
-                </>
-              )}
-            </Form.List>
-          </Card>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <Form.Item name="reference_temperature" label="参考模型温度" tooltip="参考模型的采样温度">
-              <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="aggregator_temperature" label="聚合模型温度" tooltip="聚合模型的采样温度">
-              <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="max_tokens" label="聚合模型 Max Tokens" tooltip="聚合模型的最大输出 token 数">
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="reference_max_tokens" label="参考模型 Max Tokens" tooltip="参考模型的最大输出 token 数（可选）">
-              <InputNumber min={1} style={{ width: '100%' }} placeholder="留空表示无限制" />
-            </Form.Item>
           </div>
-        </Form>
-      </Modal>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
 
-// ── Page ──────────────────────────────────────────────
-
 export default function ModelsConfig() {
-  const { message } = AntApp.useApp();
+  const { toast } = useToast();
   const { activeProfile } = useConfigStore();
-  const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState('providers');
 
   const fetchModels = useCallback(
     () => apiClient.get<ModelsData>('/models', { params: { profile: activeProfile } }).then((res) => res.data),
@@ -1339,75 +2167,70 @@ export default function ModelsConfig() {
 
   const { data, loading, error, execute: reload } = useApi(fetchModels, [activeProfile]);
 
-  const modelOptions = Object.keys(data?.models ?? {}).sort();
-
-  const handleSaveModel = async (values: ModelConfig) => {
-    setSaving(true);
-    try {
-      await apiClient.put('/models/model', values, { params: { profile: activeProfile } });
-      message.success('主模型已保存');
-      reload();
-    } catch { message.error('保存失败'); }
-    finally { setSaving(false); }
+  const handleSaveModel = async (values: any) => {
+    await apiClient.put('/models/model', values, { params: { profile: activeProfile } });
+    reload();
   };
 
+  if (loading) {
+    return (
+      <PageContainer>
+        <Loading className="py-12" />
+      </PageContainer>
+    );
+  }
+
   return (
-    <>
-      <PageHeader title="模型配置" profile={activeProfile} profileName="管理模型与 Provider 配置" />
-      {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 16 }} />}
-      <Spin spinning={loading}>
-        <Tabs
-          defaultActiveKey="providers"
-          type="card"
-          items={[
-            {
-              key: 'providers',
-              label: 'Provider',
-              children: (
-                <ProvidersTab
-                  activeProfile={activeProfile}
-                  onReload={reload}
-                  modelOptions={modelOptions}
-                />
-              ),
-            },
-            {
-              key: 'main',
-              label: '主模型',
-              children: (
-                <MainModelTab
-                  modelData={data?.model ?? {}}
-                  modelOptions={modelOptions}
-                  activeProfile={activeProfile}
-                  onSave={handleSaveModel}
-                  saving={saving}
-                />
-              ),
-            },
-            {
-              key: 'aux',
-              label: '辅助模型',
-              children: (
-                <AuxTab data={data?.auxiliary ?? {}} activeProfile={activeProfile} onReload={reload} />
-              ),
-            },
-            {
-              key: 'fallback',
-              label: 'Fallback',
-              children: (
-                <FallbackTab data={data?.fallback_providers ?? []} activeProfile={activeProfile} onReload={reload} />
-              ),
-            },
-            {
-              key: 'moa',
-              label: 'MoA',
-              children: (
-                <MoATab data={data?.moa} activeProfile={activeProfile} onReload={reload} />
-              ),
-            },
-          ]}
+    <PageContainer>
+      <PageHeader />
+
+      {error && <ErrorAlert message={error} />}
+
+      <div className="flex gap-2 border-b">
+        {[
+          { key: 'providers', label: '供应商' },
+          { key: 'main', label: '主模型' },
+          { key: 'aux', label: '辅助模型' },
+          { key: 'fallback', label: '回退模型' },
+          { key: 'moa', label: '多智能体' },
+        ].map((tab) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                isActive
+                  ? 'tab-active'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-card/60'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeTab === 'providers' && (
+        <ProvidersTab activeProfile={activeProfile} onReload={reload} />
+      )}
+      {activeTab === 'main' && (
+        <MainModelTab
+          modelData={data?.model ?? {}}
+          activeProfile={activeProfile}
+          onSave={handleSaveModel}
         />
-      </Spin>
-    </>
+      )}
+      {activeTab === 'aux' && (
+        <AuxTab data={data?.auxiliary ?? {}} activeProfile={activeProfile} onReload={reload} />
+      )}
+      {activeTab === 'fallback' && (
+        <FallbackTab data={data?.fallback_providers ?? []} activeProfile={activeProfile} onReload={reload} />
+      )}
+      {activeTab === 'moa' && (
+        <MoATab data={data?.moa} activeProfile={activeProfile} onReload={reload} />
+      )}
+    </PageContainer>
   );
 }
+

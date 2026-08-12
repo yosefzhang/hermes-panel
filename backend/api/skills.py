@@ -31,7 +31,7 @@ class ExternalDirsPayload(BaseModel):
 
 
 def skill_service(request: Request) -> SkillService:
-    return SkillService(request.app.state.settings.hermes_home)
+    return SkillService()
 
 
 @router.get("")

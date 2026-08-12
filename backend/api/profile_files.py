@@ -30,7 +30,7 @@ class ProfileFile(BaseModel):
 
 
 def profile_service(request: Request) -> ProfileService:
-    return ProfileService(request.app.state.settings.hermes_home)
+    return ProfileService()
 
 
 def _mask_value(value: str) -> str:

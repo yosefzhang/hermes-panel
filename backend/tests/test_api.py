@@ -17,7 +17,7 @@ def make_client(tmp_path: Path) -> TestClient:
     (hermes_home / "memories" / "MEMORY.md").write_text("# memory\n", encoding="utf-8")
     settings = Settings(
         hermes_home=hermes_home,
-        control_db_path=tmp_path / "control.db",
+        hermes_panel_db_path=tmp_path / "hermes-panel.db",
         default_admin_password="admin-test-password",
         jwt_secret="test-secret",
     )
@@ -42,27 +42,6 @@ def test_default_admin_can_login_and_read_config(tmp_path: Path):
 
     assert response.status_code == 200
     assert response.json()["model"]["api_key"] == "sk-secret-value"
-
-
-def test_env_batch_update_is_protected(tmp_path: Path):
-    client = make_client(tmp_path)
-    token = login(client)
-
-    unauthorized = client.put("/api/v1/env?profile=default", json={"key": "NORMAL", "value": "x"})
-    assert unauthorized.status_code == 401
-
-    response = client.put(
-        "/api/v1/env/batch?profile=default",
-        json={"entries": [{"key": "API_KEY", "value": "sk-new-secret"}]},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 200
-
-    env_response = client.get(
-        "/api/v1/env/plain?profile=default",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert env_response.json()["API_KEY"] == "sk-new-secret"
 
 
 def test_profile_files_return_basic_configuration_files(tmp_path: Path):

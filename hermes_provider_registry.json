@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "description": "env var → provider 映射：用于 hermes-panel 通过 .env 环境变量反查已配置的 provider 并展示到前端。key 为环境变量名；name 为 provider 名称；base_url 为默认地址；base_url_env_var 为可覆盖默认地址的环境变量（在 .env 中有值时优先使用其值，否则用默认 base_url）。同一 provider 可有多个 env var（如 ANTHROPIC_API_KEY / ANTHROPIC_TOKEN）。不含 costme。",
+  "providers": {
+    "OPENAI_API_KEY": {
+      "name": "OpenAI API",
+      "base_url": "https://api.openai.com/v1",
+      "base_url_env_var": "OPENAI_BASE_URL"
+    },
+    "LM_API_KEY": {
+      "name": "LM Studio",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "base_url_env_var": "LM_BASE_URL"
+    },
+    "COPILOT_GITHUB_TOKEN": {
+      "name": "GitHub Copilot",
+      "base_url": "https://api.githubcopilot.com",
+      "base_url_env_var": "COPILOT_API_BASE_URL"
+    },
+    "GH_TOKEN": {
+      "name": "GitHub Copilot",
+      "base_url": "https://api.githubcopilot.com",
+      "base_url_env_var": "COPILOT_API_BASE_URL"
+    },
+    "GITHUB_TOKEN": {
+      "name": "GitHub Copilot",
+      "base_url": "https://api.githubcopilot.com",
+      "base_url_env_var": "COPILOT_API_BASE_URL"
+    },
+    "GOOGLE_API_KEY": {
+      "name": "Google AI Studio",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "base_url_env_var": "GEMINI_BASE_URL"
+    },
+    "GEMINI_API_KEY": {
+      "name": "Google AI Studio",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "base_url_env_var": "GEMINI_BASE_URL"
+    },
+    "GLM_API_KEY": {
+      "name": "Z.AI / GLM",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "base_url_env_var": "GLM_BASE_URL"
+    },
+    "ZAI_API_KEY": {
+      "name": "Z.AI / GLM",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "base_url_env_var": "GLM_BASE_URL"
+    },
+    "Z_AI_API_KEY": {
+      "name": "Z.AI / GLM",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "base_url_env_var": "GLM_BASE_URL"
+    },
+    "KIMI_API_KEY": {
+      "name": "Kimi / Moonshot",
+      "base_url": "https://api.moonshot.ai/v1",
+      "base_url_env_var": "KIMI_BASE_URL"
+    },
+    "KIMI_CODING_API_KEY": {
+      "name": "Kimi / Moonshot",
+      "base_url": "https://api.moonshot.ai/v1",
+      "base_url_env_var": "KIMI_BASE_URL"
+    },
+    "KIMI_CN_API_KEY": {
+      "name": "Kimi / Moonshot (China)",
+      "base_url": "https://api.moonshot.cn/v1",
+      "base_url_env_var": ""
+    },
+    "STEPFUN_API_KEY": {
+      "name": "StepFun Step Plan",
+      "base_url": "https://api.stepfun.ai/step_plan/v1",
+      "base_url_env_var": "STEPFUN_BASE_URL"
+    },
+    "ARCEEAI_API_KEY": {
+      "name": "Arcee AI",
+      "base_url": "https://api.arcee.ai/api/v1",
+      "base_url_env_var": "ARCEE_BASE_URL"
+    },
+    "GMI_API_KEY": {
+      "name": "GMI Cloud",
+      "base_url": "https://api.gmi-serving.com/v1",
+      "base_url_env_var": "GMI_BASE_URL"
+    },
+    "ACTUAL_API_KEY": {
+      "name": "Actual Computer",
+      "base_url": "https://api.actual.inc/v1",
+      "base_url_env_var": "ACTUAL_BASE_URL"
+    },
+    "MINIMAX_API_KEY": {
+      "name": "MiniMax",
+      "base_url": "https://api.minimax.io/anthropic",
+      "base_url_env_var": "MINIMAX_BASE_URL"
+    },
+    "ANTHROPIC_API_KEY": {
+      "name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    "ANTHROPIC_TOKEN": {
+      "name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    "CLAUDE_CODE_OAUTH_TOKEN": {
+      "name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "base_url_env_var": "ANTHROPIC_BASE_URL"
+    },
+    "DASHSCOPE_API_KEY": {
+      "name": "Qwen Cloud",
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "base_url_env_var": "DASHSCOPE_BASE_URL"
+    },
+    "ALIBABA_CODING_PLAN_API_KEY": {
+      "name": "Alibaba Cloud (Coding Plan)",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "base_url_env_var": "ALIBABA_CODING_PLAN_BASE_URL"
+    },
+    "MINIMAX_CN_API_KEY": {
+      "name": "MiniMax (China)",
+      "base_url": "https://api.minimaxi.com/anthropic",
+      "base_url_env_var": "MINIMAX_CN_BASE_URL"
+    },
+    "DEEPSEEK_API_KEY": {
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com/v1",
+      "base_url_env_var": "DEEPSEEK_BASE_URL"
+    },
+    "XAI_API_KEY": {
+      "name": "xAI",
+      "base_url": "https://api.x.ai/v1",
+      "base_url_env_var": "XAI_BASE_URL"
+    },
+    "NVIDIA_API_KEY": {
+      "name": "NVIDIA NIM",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "base_url_env_var": "NVIDIA_BASE_URL"
+    },
+    "AI_GATEWAY_API_KEY": {
+      "name": "Vercel AI Gateway",
+      "base_url": "https://ai-gateway.vercel.sh/v1",
+      "base_url_env_var": "AI_GATEWAY_BASE_URL"
+    },
+    "OPENCODE_ZEN_API_KEY": {
+      "name": "OpenCode Zen",
+      "base_url": "https://opencode.ai/zen/v1",
+      "base_url_env_var": "OPENCODE_ZEN_BASE_URL"
+    },
+    "OPENCODE_GO_API_KEY": {
+      "name": "OpenCode Go",
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "base_url_env_var": "OPENCODE_GO_BASE_URL"
+    },
+    "KILOCODE_API_KEY": {
+      "name": "Kilo Code",
+      "base_url": "https://api.kilo.ai/api/gateway",
+      "base_url_env_var": "KILOCODE_BASE_URL"
+    },
+    "HF_TOKEN": {
+      "name": "Hugging Face",
+      "base_url": "https://router.huggingface.co/v1",
+      "base_url_env_var": "HF_BASE_URL"
+    },
+    "XIAOMI_API_KEY": {
+      "name": "Xiaomi MiMo",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "base_url_env_var": "XIAOMI_BASE_URL"
+    },
+    "TOKENHUB_API_KEY": {
+      "name": "Tencent TokenHub",
+      "base_url": "https://tokenhub.tencentmaas.com/v1",
+      "base_url_env_var": "TOKENHUB_BASE_URL"
+    },
+    "OLLAMA_API_KEY": {
+      "name": "Ollama Cloud",
+      "base_url": "https://ollama.com/v1",
+      "base_url_env_var": "OLLAMA_BASE_URL"
+    },
+    "AZURE_FOUNDRY_API_KEY": {
+      "name": "Azure Foundry",
+      "base_url": "",
+      "base_url_env_var": "AZURE_FOUNDRY_BASE_URL"
+    },
+    "OPENROUTER_API_KEY": {
+      "name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "base_url_env_var": "OPENROUTER_BASE_URL"
+    }
+  }
+}

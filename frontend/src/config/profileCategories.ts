@@ -6,11 +6,6 @@ export interface ProfileCategory {
 
 export const profileCategories: ProfileCategory[] = [
   {
-    key: 'env',
-    label: '环境变量',
-    sections: [],
-  },
-  {
     key: 'models',
     label: '模型配置',
     sections: [],

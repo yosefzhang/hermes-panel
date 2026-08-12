@@ -1,0 +1,188 @@
+@import "tailwindcss";
+@import "@chinese-fonts/mksjh/dist/MaokenAssortedSans/result.css";
+
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --shadow-soft: 0 4px 24px rgba(124, 58, 237, 0.08);
+  --shadow-float: 0 12px 40px rgba(124, 58, 237, 0.14);
+  --radius: 0.875rem;
+}
+
+@layer base {
+  :root {
+    /* Violet unified palette */
+    --background: 260 40% 98%;
+    --foreground: 250 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 250 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 250 47% 11%;
+
+    --primary: 258 90% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 260 40% 96%;
+    --secondary-foreground: 250 47% 11%;
+
+    --muted: 260 40% 96%;
+    --muted-foreground: 255 16% 47%;
+
+    --accent: 260 40% 96%;
+    --accent-foreground: 250 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 72% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 260 30% 92%;
+    --input: 260 30% 92%;
+    --ring: 258 90% 60%;
+    --radius: 0.875rem;
+
+    /* Extended design tokens */
+    --glass-bg: rgba(255, 255, 255, 0.72);
+    --glass-border: rgba(255, 255, 255, 0.55);
+    --glass-highlight: rgba(255, 255, 255, 0.9);
+    --shadow-soft: 0 4px 24px rgba(124, 58, 237, 0.08);
+    --shadow-float: 0 12px 40px rgba(124, 58, 237, 0.14);
+  }
+
+  .dark {
+    --background: 250 47% 11%;
+    --foreground: 260 40% 98%;
+
+    --card: 250 47% 14%;
+    --card-foreground: 260 40% 98%;
+
+    --popover: 250 47% 14%;
+    --popover-foreground: 260 40% 98%;
+
+    --primary: 258 90% 66%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 257 33% 17%;
+    --secondary-foreground: 260 40% 98%;
+
+    --muted: 257 33% 17%;
+    --muted-foreground: 255 20% 65%;
+
+    --accent: 257 33% 17%;
+    --accent-foreground: 260 40% 98%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 70% 50%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 257 33% 20%;
+    --input: 257 33% 20%;
+    --ring: 258 90% 66%;
+
+    --glass-bg: rgba(15, 23, 42, 0.68);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-highlight: rgba(255, 255, 255, 0.06);
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-family: "Maoken Assorted Sans", "猫啃杂黑体", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-strong {
+    background: var(--glass-highlight);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--glass-border);
+  }
+
+  .shadow-soft {
+    box-shadow: var(--shadow-soft);
+  }
+
+  .shadow-float {
+    box-shadow: var(--shadow-float);
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+  }
+
+  .gradient-primary {
+    background-image: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+  }
+
+  .mesh-bg {
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(at 12% 18%, rgba(124, 58, 237, 0.16) 0px, transparent 40%),
+      radial-gradient(at 88% 22%, rgba(167, 139, 250, 0.12) 0px, transparent 38%),
+      radial-gradient(at 60% 85%, rgba(124, 58, 237, 0.1) 0px, transparent 40%),
+      radial-gradient(at 18% 80%, rgba(167, 139, 250, 0.08) 0px, transparent 38%);
+  }
+
+  .status-success {
+    background-color: hsl(var(--success));
+    color: hsl(var(--success-foreground));
+  }
+
+  .status-destructive {
+    background-color: hsl(var(--destructive));
+    color: hsl(var(--destructive-foreground));
+  }
+
+  /* Active state for in-page tab bars (Provider / Channel tabs etc.). */
+  .tab-active {
+    border-color: hsl(var(--primary));
+    color: hsl(var(--primary));
+    background-color: hsl(var(--primary) / 0.08);
+  }
+}
