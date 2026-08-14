@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS profiles (
     components TEXT NOT NULL DEFAULT '{}',
     current_config_version INTEGER,
     latest_config_version INTEGER,
+    memory_available INTEGER,
+    memory_provider TEXT,
+    memory_endpoint TEXT,
+    memory_agent TEXT,
     updated_at REAL NOT NULL,
     UNIQUE(host, username, ip, profile_name)
 );
@@ -87,8 +91,10 @@ CREATE INDEX IF NOT EXISTS idx_profiles_updated ON profiles(updated_at);
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(db_path)
+    connection = sqlite3.connect(db_path, timeout=10)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=10000")
     return connection
 
 

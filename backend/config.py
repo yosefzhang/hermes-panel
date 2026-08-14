@@ -112,7 +112,7 @@ class Settings(BaseModel):
         default_factory=lambda: os.environ.get("SYNC_TOKEN") or None
     )
     sync_interval: int = Field(
-        default_factory=lambda: int(os.environ.get("SYNC_INTERVAL", "60"))
+        default_factory=lambda: int(os.environ.get("SYNC_INTERVAL", "600"))
     )
 
 

@@ -96,7 +96,7 @@ Hermes Panel 后端使用 RotatingFileHandler 将日志写入文件，同时输�
 
 ## 数据库
 
-Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路径由 `HERMES_PANEL_DB` 控制，默认位于 `~/.config/hermes-panel/hermes-panel.db`。表结构定义在 [`backend/db/database.py`](backend/db/database.py) 中。
+Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路径由 `HERMES_PANEL_DB` 控制，默认位于 `~/.config/hermes-panel/hermes-panel.db`。表结构定义在 [`backend/db/database.py`](backend/db/database.py) 中。数据库使用 WAL（Write-Ahead Logging）模式并设置 `busy_timeout=10s`，以支持并发读写并避免锁冲突。
 
 数据库包含两类表：
 
@@ -112,25 +112,31 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 
 `host_info` 与 `profile_stats` 已合并为一张表，每一行代表**某个主机上的某个 profile**，同时携带该主机的元数据（Hermes 版本、系统版本等）。这是多主机汇总与数据同步的核心表。
 
-| 字段 | 说明 |
-|------|------|
-| `host` | 主机名 |
-| `username` | 用户名 |
-| `ip` | IP 地址 |
-| `profile_name` | profile 名称 |
-| `path` | profile 路径 |
-| `gateway_status` | 该 profile 下 gateway 运行状态 |
-| `session_count` | 会话数 |
-| `total_tokens` | 总 token 数 |
-| `total_input_tokens` | 输入 token 数 |
-| `total_output_tokens` | 输出 token 数 |
-| `cache_hit_rate` | 缓存命中率 |
-| `model_top5` | token 用量 Top5 模型，JSON 数组 |
-| `provider_top5` | token 用量 Top5 provider，JSON 数组 |
-| `daily_tokens` | 最近 15 天每日 token 用量，JSON 数组 |
-| `hermes_version` | Hermes CLI 版本（独立列） |
-| `components` | 除 Hermes 外的各组件版本信息，JSON |
-| `updated_at` | 更新时间戳 |
+| 字段 | 说明 | 更新频率 |
+|------|------|----------|
+| `host` | 主机名 | - |
+| `username` | 用户名 | - |
+| `ip` | IP 地址 | - |
+| `profile_name` | profile 名称 | - |
+| `path` | profile 路径 | 1h |
+| `gateway_status` | 该 profile 下 gateway 运行状态 | 10min |
+| `session_count` | 会话数 | 10min |
+| `total_tokens` | 总 token 数 | 10min |
+| `total_input_tokens` | 输入 token 数 | 10min |
+| `total_output_tokens` | 输出 token 数 | 10min |
+| `cache_hit_rate` | 缓存命中率 | 10min |
+| `model_top5` | token 用量 Top5 模型，JSON 数组 | 1h |
+| `provider_top5` | token 用量 Top5 provider，JSON 数组 | 1h |
+| `daily_tokens` | 最近 15 天每日 token 用量，JSON 数组 | 1h |
+| `hermes_version` | Hermes CLI 版本（独立列） | 10min（随 host info） |
+| `components` | 除 Hermes 外的各组件版本信息，JSON | 10min（随 host info） |
+| `current_config_version` | 当前 profile 配置版本 | 1h |
+| `latest_config_version` | 最新可用配置版本 | 1h |
+| `memory_available` | 外置记忆体是否可用 | 1h |
+| `memory_provider` | 记忆体 provider 名称（如 openviking） | 1h |
+| `memory_endpoint` | 记忆体端点地址 | 1h |
+| `memory_agent` | 记忆体 agent 标识 | 1h |
+| `updated_at` | 更新时间戳 | 每次采集 |
 
 唯一约束：`UNIQUE(host, username, ip, profile_name)`。
 
@@ -157,13 +163,15 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 - Skills 列表、来源判定、启用/禁用：[backend/api/skills.py](backend/api/skills.py)、[backend/services/skill_service.py](backend/services/skill_service.py)
 - Plugins 列表、启用、禁用、删除：[backend/api/plugins.py](backend/api/plugins.py)
 - 调用 Hermes CLI 时的 profile 前缀定位：[backend/services/cli_runner.py](backend/services/cli_runner.py)
-- 统一的子进程执行封装：[backend/services/subprocess_utils.py](backend/services/subprocess_utils.py)
+- 统一的子进程执行封装：[backend/services/subprocess_utils.py](backend/services/subprocess_utils.py)（所有 subprocess 调用均记录 cmd / rc / stdout/stderr 长度到日志）
 
-### 模型、渠道、Memory
+### 模型、渠道、Memory、SOUL
 
 - 模型配置与 provider 管理：[backend/api/models_config.py](backend/api/models_config.py)
 - 消息渠道配置（config + .env）：[backend/api/channels.py](backend/api/channels.py)
-- Memory 配置与记忆文件预览：[backend/api/memory.py](backend/api/memory.py)
+- Memory 文件预览与编辑（MEMORY.md / USER.md）：[backend/api/memory.py](backend/api/memory.py)
+- 外置记忆体状态采集（hermes memory status）：[backend/services/profile_stats_service.py](backend/services/profile_stats_service.py) `_collect_memory_status()`
+- SOUL.md 查看与编辑：[backend/api/profile_files.py](backend/api/profile_files.py)（支持 SOUL.md / soul.md 大小写自动识别）
 
 ### 数据面板
 
@@ -212,10 +220,11 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 ```
 子面板                          主面板
   │                               │
-  ├─ ProfileStatsService.collect_local_stats() ─┐
-  ├─ HostInfoService.refresh_local() ───────────┤
+  ├─ collect_fast_stats()  10min ─┐  (gateway + token)
+  ├─ collect_local_stats()  1h   ─┤  (全量 + memory status)
+  ├─ host_info.refresh_local()   ─┤  (hermes version + components)
   │                               │             │
-  │                               │  定时 60s   │
+  │                               │  定时 SYNC_INTERVAL  │
   │                               ▼             │
   │                    SyncService.push()       │
   │                               │             │
@@ -235,8 +244,15 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 
 FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main.py)）：
 
-1. `_refresh_local_data`：每 60 秒扫描本地 Hermes profiles，把统计写入统一的 `profiles` 表，随后用本机主机元数据（Hermes 版本、组件版本等）更新这些行。profile 统计与主机元数据写同一张表、同一批行，因此合并为单一定时循环，确保两者在同一周期内时间戳一致。
+1. `_refresh_local_data`：双频率采集循环，将本地 Hermes profiles 统计写入统一的 `profiles` 表：
+   - **快速周期（10 分钟）**：仅采集 gateway 状态、token 总量（session_count、total_tokens、input/output_tokens、cache_hit_rate），调用 `collect_fast_stats()` + `host_info_service.refresh_local()`
+   - **完整周期（1 小时）**：采集全部字段（含 model/provider top5、daily_tokens、config version、memory status），调用 `collect_local_stats()` + `host_info_service.refresh_local()`
+   - 启动时先执行一次完整采集，确保首次渲染有完整数据
+   - 两个周期共用 `_collect_lock` 防止并发写入导致 `database is locked`
+   - SQLite 使用 WAL 模式 + busy_timeout=10s 防止读写锁冲突
 2. `_run_sync_loop`：若 `SYNC_ENABLED=true` 且配置了 `SYNC_TARGET_URL`，则每 `SYNC_INTERVAL` 秒把本地数据 POST 到目标面板
+
+> 前端"刷新"按钮（`POST /api/v1/profiles/aggregated/refresh`）会触发一次完整采集，不受后台定时周期限制。
 
 ### 接收端处理
 
@@ -269,14 +285,14 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
 | `/auth` | 登录、当前用户、登出 |
 | `/users` | 用户增删改查、改密码（admin） |
 | `/config` | config.yaml section / 原始 YAML 读写 |
-| `/profile-files` | profile 下 config / .env / SOUL / USER / MEMORY 文件（.env 掩码） |
+| `/profile-files` | profile 下 config / .env / SOUL / USER / MEMORY 文件读写（.env 掩码，SOUL.md 支持大小写） |
 | `/profiles` | profile 列表与详情 |
-| `/profiles/aggregated` | profile 统计聚合（含多主机） |
+| `/profiles/aggregated` | profile 统计聚合（含多主机），`/refresh` 触发全量采集 |
 | `/skills` | skills 列表、读写、启用禁用、导入、external-dirs |
 | `/plugins` | 插件列表、启用、禁用、删除 |
 | `/models` | 模型 section、providers、预设、连通性测试 |
 | `/channels` | 渠道配置（config + .env） |
-| `/memory` | memory 配置与记忆文件预览 |
+| `/memory` | MEMORY.md / USER.md 文件预览与编辑 |
 | `/tokens` | token 用量聚合、趋势、仪表盘 |
 | `/host-info` | 主机信息聚合 |
 | `/system` | 系统指标、历史、版本、Hermes 更新（admin），`/ws/system` 实时推送，`/health` 公开端点 |
@@ -364,6 +380,7 @@ hermes-panel/
 │       │   ├── ModelsConfig.tsx
 │       │   ├── ChannelsConfig.tsx
 │       │   ├── MemoryConfig.tsx
+│       │   ├── SoulPage.tsx
 │       │   ├── TokenUsage.tsx
 │       │   ├── Settings.tsx
 │       │   ├── Login.tsx

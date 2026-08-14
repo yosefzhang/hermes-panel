@@ -6,13 +6,16 @@ under the sender's host, username and IP combination.
 """
 from __future__ import annotations
 
+import asyncio
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from backend.auth.dependencies import require_admin
 from backend.config import Settings, get_settings, update_env_file
 from backend.db.models import User
-from backend.services.sync_service import SyncService
+from backend.services.sync_service import SyncService, get_receive_status, get_send_status, set_receive_enabled, set_send_enabled
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -68,6 +71,18 @@ async def update_sync_settings(
     }
     update_env_file(updates)
 
+    # Sync os.environ so get_settings() (which creates a fresh Settings
+    # instance and only reads env vars NOT already in os.environ) returns
+    # the updated values on the next call.
+    for key, value in updates.items():
+        if value is not None:
+            os.environ[key] = value
+        elif key in os.environ:
+            del os.environ[key]
+
+    set_receive_enabled(body.receive_enabled)
+    set_send_enabled(body.enabled)
+
     # Update in-memory settings immediately.
     app_settings.sync_enabled = body.enabled
     app_settings.sync_receive_enabled = body.receive_enabled
@@ -78,10 +93,51 @@ async def update_sync_settings(
     return {"ok": True}
 
 
-@router.post("/")
-async def receive_sync(payload: dict, user: User = Depends(require_admin)):
-    """Receive profile_stats and host_info from another hermes-panel."""
+@router.get("/status")
+async def get_sync_status(
+    request: Request,
+    user: User = Depends(require_admin),
+):
+    """Return runtime sync status, including receive-sync process state."""
     settings = get_settings()
+    status = get_receive_status()
+    status["send"] = get_send_status()
+    # Derive the local receive endpoint URL from the request so the UI can
+    # show senders where to POST.
+    scheme = request.url.scheme
+    host = request.headers.get("host", f"{settings.host}:{settings.port}")
+    status["receive_url"] = f"{scheme}://{host}/api/v1/sync/"
+    status["port"] = settings.port
+    return status
+
+
+@router.post("/")
+async def receive_sync(request: Request, payload: dict):
+    """Receive profile_stats and host_info from another hermes-panel.
+
+    Authentication: the sender provides the shared sync token via the
+    ``Authorization: Bearer <token>`` header.  This is a machine-to-machine
+    endpoint, so we verify the sync token directly rather than requiring a
+    JWT (which only the panel's own UI users possess).
+    """
+    settings = get_settings()
+    if not settings.sync_receive_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="接收同步未启用",
+        )
+    # Verify the shared sync token.
+    expected_token = settings.sync_token
+    if expected_token:
+        auth_header = request.headers.get("Authorization", "")
+        received_token = ""
+        if auth_header.startswith("Bearer "):
+            received_token = auth_header[7:]
+        if received_token != expected_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的同步凭证",
+            )
     service = SyncService(settings)
     try:
         result = service.ingest(payload)
@@ -103,5 +159,26 @@ async def verify_target(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("message", "verification failed"),
+        )
+    return result
+
+
+@router.post("/push")
+async def trigger_push(request: Request, user: User = Depends(require_admin)):
+    """Trigger an immediate sync push to the target panel."""
+    settings: Settings = request.app.state.settings
+    if not settings.sync_enabled or not settings.sync_target_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="发送同步未启用或未配置目标地址",
+        )
+    service = SyncService(settings)
+    result = await asyncio.to_thread(service.push)
+    from backend.services.sync_service import record_push_result
+    record_push_result(result.get("ok", False), result.get("message"))
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=result.get("message", "推送失败"),
         )
     return result

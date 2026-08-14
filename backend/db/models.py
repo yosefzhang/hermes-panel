@@ -25,6 +25,10 @@ class Profile:
     components: dict
     current_config_version: int | None
     latest_config_version: int | None
+    memory_available: bool | None
+    memory_provider: str | None
+    memory_endpoint: str | None
+    memory_agent: str | None
     updated_at: float
 
     @property
@@ -53,6 +57,10 @@ class Profile:
             "components": self.components,
             "current_config_version": self.current_config_version,
             "latest_config_version": self.latest_config_version,
+            "memory_available": self.memory_available,
+            "memory_provider": self.memory_provider,
+            "memory_endpoint": self.memory_endpoint,
+            "memory_agent": self.memory_agent,
             "updated_at": self.updated_at,
         }
 

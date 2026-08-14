@@ -30,13 +30,64 @@ _receive_state: dict = {
     "total_payloads": 0,
 }
 
+# In-memory state for the send sync "process".  Send sync runs as an asyncio
+# background loop (_run_sync_loop); we track when it was enabled and the last
+# push result so the UI can display "process" status.
+_send_state: dict = {
+    "enabled_at": None,
+    "last_push_at": None,
+    "last_push_ok": None,
+    "last_push_message": None,
+    "total_pushes": 0,
+    "total_successes": 0,
+    "total_failures": 0,
+}
+
 
 def set_receive_enabled(enabled: bool) -> None:
     """Update receive-sync runtime state when the setting is toggled."""
     if enabled and _receive_state["enabled_at"] is None:
         _receive_state["enabled_at"] = time.time()
-    elif not enabled:
+        logger.info("Receive sync enabled - now accepting incoming sync payloads")
+    elif not enabled and _receive_state["enabled_at"] is not None:
         _receive_state["enabled_at"] = None
+        logger.info("Receive sync disabled - no longer accepting incoming sync payloads")
+
+
+def set_send_enabled(enabled: bool) -> None:
+    """Update send-sync runtime state when the setting is toggled."""
+    if enabled and _send_state["enabled_at"] is None:
+        _send_state["enabled_at"] = time.time()
+        logger.info("Send sync enabled - now pushing local stats to target panel")
+    elif not enabled and _send_state["enabled_at"] is not None:
+        _send_state["enabled_at"] = None
+        logger.info("Send sync disabled - no longer pushing to target panel")
+
+
+def initialize_receive_state_from_settings(settings: Settings) -> None:
+    """Restore receive-sync runtime state from persisted settings on startup."""
+    if settings.sync_receive_enabled and _receive_state["enabled_at"] is None:
+        _receive_state["enabled_at"] = time.time()
+        logger.info("Receive sync restored from settings - now accepting incoming sync payloads")
+
+
+def initialize_send_state_from_settings(settings: Settings) -> None:
+    """Restore send-sync runtime state from persisted settings on startup."""
+    if settings.sync_enabled and _send_state["enabled_at"] is None:
+        _send_state["enabled_at"] = time.time()
+        logger.info("Send sync restored from settings - now pushing to target panel")
+
+
+def record_push_result(ok: bool, message: str | None = None) -> None:
+    """Record the outcome of a sync push attempt."""
+    _send_state["last_push_at"] = time.time()
+    _send_state["last_push_ok"] = ok
+    _send_state["last_push_message"] = message
+    _send_state["total_pushes"] += 1
+    if ok:
+        _send_state["total_successes"] += 1
+    else:
+        _send_state["total_failures"] += 1
 
 
 def get_receive_status() -> dict:
@@ -50,6 +101,22 @@ def get_receive_status() -> dict:
         "last_profiles_count": _receive_state["last_profiles_count"],
         "last_hosts_count": _receive_state["last_hosts_count"],
         "total_payloads": _receive_state["total_payloads"],
+    }
+
+
+def get_send_status() -> dict:
+    """Return current send-sync runtime status."""
+    enabled_at = _send_state["enabled_at"]
+    return {
+        "enabled": enabled_at is not None,
+        "enabled_at": enabled_at,
+        "uptime_seconds": round(time.time() - enabled_at, 1) if enabled_at else 0,
+        "last_push_at": _send_state["last_push_at"],
+        "last_push_ok": _send_state["last_push_ok"],
+        "last_push_message": _send_state["last_push_message"],
+        "total_pushes": _send_state["total_pushes"],
+        "total_successes": _send_state["total_successes"],
+        "total_failures": _send_state["total_failures"],
     }
 
 
@@ -78,6 +145,10 @@ class SyncService:
 
         payload = self._collect_payload()
         url = self._target_url("/api/v1/sync/")
+        logger.info(
+            "Sync push starting: url=%s profiles=%d hosts=%d",
+            url, len(payload.get("profiles", [])), len(payload.get("hosts", [])),
+        )
         try:
             response = self._http.request(
                 "POST",
@@ -181,7 +252,7 @@ class SyncService:
                         ip = parts[2]
 
                 hinfo = _find_host(host, username, ip) or {}
-                stats_service._upsert(
+                ProfileStatsService.upsert(
                     conn,
                     host=host,
                     username=username,
@@ -199,6 +270,10 @@ class SyncService:
                     daily_tokens=p.get("daily_tokens", []),
                     current_config_version=p.get("current_config_version"),
                     latest_config_version=p.get("latest_config_version"),
+                    memory_available=p.get("memory_available"),
+                    memory_provider=p.get("memory_provider"),
+                    memory_endpoint=p.get("memory_endpoint"),
+                    memory_agent=p.get("memory_agent"),
                     updated_at=p.get("updated_at", time.time()),
                 )
                 # Update host metadata columns on the same row.
@@ -227,5 +302,12 @@ class SyncService:
         _receive_state["last_profiles_count"] = len(profiles)
         _receive_state["last_hosts_count"] = len(hosts)
         _receive_state["total_payloads"] += 1
+
+        logger.info(
+            "Sync payload received: profiles=%d hosts=%d total_payloads=%d",
+            len(profiles),
+            len(hosts),
+            _receive_state["total_payloads"],
+        )
 
         return {"ok": True, "profiles": len(profiles), "hosts": len(hosts)}

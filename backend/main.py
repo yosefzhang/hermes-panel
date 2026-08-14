@@ -52,7 +52,7 @@ from backend.config import Settings, get_settings
 from backend.db.database import init_database
 from backend.services.host_info_service import HostInfoService
 from backend.services.profile_stats_service import ProfileStatsService
-from backend.services.sync_service import SyncService
+from backend.services.sync_service import SyncService, get_receive_status, initialize_receive_state_from_settings, initialize_send_state_from_settings, set_receive_enabled, set_send_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,8 @@ logger = logging.getLogger(__name__)
 # table for the same (host, username, ip, profile_name) rows, so they are
 # refreshed together in a single loop to keep the two in sync within the
 # same timestamp cycle.
-_LOCAL_DATA_REFRESH_INTERVAL = 60
+_FAST_REFRESH_INTERVAL = 600   # 10 minutes: gateway status + token totals
+_FULL_REFRESH_INTERVAL = 3600  # 1 hour: all fields including memory status, config version, etc.
 
 # A typical uvicorn dev session already configures its own handlers; avoid
 # touching logging when we detect a non-empty child logger config (e.g.
@@ -135,7 +136,13 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         # Re-run initialization on startup as well: this matters when
         # `initialize_database=False` is used (e.g. tests) but the app
         # still wants the schema and default admin ready before serving.
-        init_database(app.state.settings)
+        await asyncio.to_thread(init_database, app.state.settings)
+
+        # Restore receive-sync runtime state from persisted settings.
+        initialize_receive_state_from_settings(app.state.settings)
+
+        # Restore send-sync runtime state from persisted settings.
+        initialize_send_state_from_settings(app.state.settings)
 
         # Start local data collection (profile stats + host metadata) in a
         # single background loop, since both write to the same `profiles`
@@ -146,7 +153,10 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
             _refresh_local_data(stats_service, host_info_service)
         )
 
-        # Start sync task when configured to push data to another panel.
+        # Start sync task. The loop stays alive for the whole process
+        # lifetime and only pushes when `sync_enabled` and `sync_target_url`
+        # are both configured, so toggling the setting at runtime takes
+        # effect without restarting the server.
         sync_service = SyncService(app.state.settings)
         sync_task = asyncio.create_task(_run_sync_loop(sync_service))
 
@@ -231,7 +241,7 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
             app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
 
         @app.get("/{full_path:path}", include_in_schema=False)
-        def serve_frontend(full_path: str):
+        async def serve_frontend(full_path: str):
             requested_path = dist_path / full_path
             if full_path and requested_path.is_file():
                 return FileResponse(requested_path)
@@ -244,30 +254,44 @@ async def _refresh_local_data(
     stats_service: ProfileStatsService,
     host_info_service: HostInfoService,
 ) -> None:
-    """Background loop that keeps the local rows in the `profiles` table up to date.
+    """Background loop with two cadences:
 
-    Profile statistics and host metadata are written to the same unified
-    `profiles` table, so both are refreshed within a single cycle to keep
-    them consistent under the same timestamp. Host metadata is refreshed
-    after profile stats so it updates the rows that stats just upserted.
+    - Every 10 min: fast stats (gateway status + token totals) + host info
+    - Every 1 hour: full stats (all fields: memory status, config version,
+      model/provider breakdowns, daily tokens) + host info
+
+    Host metadata (hermes_version, components) is refreshed alongside the
+    fast cycle so the dashboard reflects version changes reasonably quickly.
     """
     logger.info(
-        "Local data refresh loop starting (interval=%ds)",
-        _LOCAL_DATA_REFRESH_INTERVAL,
+        "Local data refresh loop starting (fast=%ds, full=%ds)",
+        _FAST_REFRESH_INTERVAL, _FULL_REFRESH_INTERVAL,
     )
+
+    # Run a full collection immediately on startup so the first dashboard
+    # render has complete data.
     try:
         await asyncio.to_thread(stats_service.collect_local_stats)
         await asyncio.to_thread(host_info_service.refresh_local)
     except Exception:
-        logger.exception("Initial local data collection failed")
+        logger.exception("Initial full data collection failed")
 
+    last_full = time.time()
     while True:
         try:
-            await asyncio.sleep(_LOCAL_DATA_REFRESH_INTERVAL)
-            logger.info("Local data refresh cycle start")
-            await asyncio.to_thread(stats_service.collect_local_stats)
-            await asyncio.to_thread(host_info_service.refresh_local)
-            logger.info("Local data refresh cycle done")
+            await asyncio.sleep(_FAST_REFRESH_INTERVAL)
+            elapsed_since_full = time.time() - last_full
+            if elapsed_since_full >= _FULL_REFRESH_INTERVAL:
+                logger.info("Local data refresh cycle (full) start")
+                await asyncio.to_thread(stats_service.collect_local_stats)
+                await asyncio.to_thread(host_info_service.refresh_local)
+                last_full = time.time()
+                logger.info("Local data refresh cycle (full) done")
+            else:
+                logger.info("Local data refresh cycle (fast) start")
+                await asyncio.to_thread(stats_service.collect_fast_stats)
+                await asyncio.to_thread(host_info_service.refresh_local)
+                logger.info("Local data refresh cycle (fast) done")
         except asyncio.CancelledError:
             logger.info("Local data refresh loop cancelled")
             break
@@ -277,21 +301,25 @@ async def _refresh_local_data(
 
 async def _run_sync_loop(service: SyncService) -> None:
     """Background loop that pushes local stats to a target panel."""
-    settings = service.settings
-    if not settings.sync_enabled or not settings.sync_target_url:
-        return
+    from backend.services.sync_service import record_push_result
 
     while True:
         try:
-            await asyncio.to_thread(service.push)
+            await asyncio.sleep(service.settings.sync_interval)
         except asyncio.CancelledError:
             break
-        except Exception:
-            logger.exception("Sync push failed")
+
+        if not service.settings.sync_enabled or not service.settings.sync_target_url:
+            continue
+
         try:
-            await asyncio.sleep(settings.sync_interval)
+            result = await asyncio.to_thread(service.push)
+            record_push_result(result.get("ok", False), result.get("message"))
         except asyncio.CancelledError:
             break
+        except Exception as exc:
+            record_push_result(False, str(exc))
+            logger.exception("Sync push failed")
 
 
 # Module-level app for `uvicorn backend.main:app`.  Database init is

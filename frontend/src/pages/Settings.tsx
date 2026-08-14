@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, apiClient } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useAuthStore } from '../store/authStore';
@@ -43,6 +43,7 @@ function SyncSettingsSection() {
   const { toast } = useToast();
   const [enabled, setEnabled] = useState(false);
   const [receiveEnabled, setReceiveEnabled] = useState(false);
+  const [receiveRuntimeEnabled, setReceiveRuntimeEnabled] = useState(false);
   const [targetHost, setTargetHost] = useState('');
   const [targetPort, setTargetPort] = useState('8650');
   const [token, setToken] = useState('');
@@ -52,9 +53,52 @@ function SyncSettingsSection() {
   const [sendOpen, setSendOpen] = useState(false);
   const [sendStatus, setSendStatus] = useState<'idle' | 'ok' | 'error'>('idle');
   const [sendStatusText, setSendStatusText] = useState('未验证');
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<{
+    enabled: boolean;
+    enabled_at: number | null;
+    uptime_seconds: number;
+    last_received_at: number | null;
+    last_profiles_count: number;
+    last_hosts_count: number;
+    total_payloads: number;
+    receive_url: string;
+    port: number;
+    send: {
+      enabled: boolean;
+      enabled_at: number | null;
+      uptime_seconds: number;
+      last_push_at: number | null;
+      last_push_ok: boolean | null;
+      last_push_message: string | null;
+      total_pushes: number;
+      total_successes: number;
+      total_failures: number;
+    };
+  } | null>(null);
+
+  const receiveEnabledRef = useRef(receiveEnabled);
+  useEffect(() => {
+    receiveEnabledRef.current = receiveEnabled;
+  }, [receiveEnabled]);
 
   const fetchSettings = useCallback(() => api.syncSettings(), []);
   const { data, loading, error, execute: reload } = useApi(fetchSettings, []);
+
+  const fetchStatus = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const status = await api.syncStatus();
+      setRuntimeStatus(status);
+      setReceiveRuntimeEnabled(status.enabled);
+    } catch {
+      setRuntimeStatus(null);
+      // 如果运行时状态接口失败，回退到当前配置状态，避免显示不一致
+      setReceiveRuntimeEnabled(receiveEnabledRef.current);
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (data) {
@@ -67,8 +111,9 @@ function SyncSettingsSection() {
       setInterval(data.interval);
       setSendStatus('idle');
       setSendStatusText('未验证');
+      fetchStatus();
     }
-  }, [data]);
+  }, [data, fetchStatus]);
 
   const targetUrl = buildTargetUrl(targetHost, targetPort);
 
@@ -105,6 +150,8 @@ function SyncSettingsSection() {
       setInterval(nextInterval);
       setSendOpen(false);
       toast({ title: '成功', description: '同步配置已保存' });
+      // Refresh runtime status after saving to reflect actual process state
+      fetchStatus();
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '保存失败' });
     } finally {
@@ -136,14 +183,33 @@ function SyncSettingsSection() {
     }
   };
 
+  const [pushing, setPushing] = useState(false);
+
+  const handlePush = async () => {
+    setPushing(true);
+    try {
+      const result = await api.triggerSyncPush();
+      toast({ title: '同步成功', description: '数据已推送到目标面板' });
+      fetchStatus();
+    } catch (err: unknown) {
+      const message =
+        (err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : undefined) || '推送失败';
+      toast({ variant: 'destructive', title: '同步失败', description: message });
+    } finally {
+      setPushing(false);
+    }
+  };
+
   if (loading) return <Loading className="py-8" />;
 
   return (
     <div className="grid gap-4">
       {error && <ErrorAlert message={error} />}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
+      {/* 发送数据同步 */}
+      <Card>
         <CardContent className="p-5 space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1 min-w-0">
@@ -155,51 +221,87 @@ function SyncSettingsSection() {
                 将本机 profiles 数据同步到远程 hermes-panel
               </p>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              disabled={saving}
-              onClick={() => {
-                if (enabled) {
-                  handleSave({ enabled: false });
-                } else {
-                  setSendOpen(true);
-                }
-              }}
-            >
-              {enabled ? '禁用' : '启用'}
-            </Button>
+            <div className="flex items-center gap-2">
+              {enabled && (
+                <Button variant="outline" size="sm" onClick={handlePush} disabled={pushing}>
+                  {pushing ? '同步中...' : '同步一次'}
+                </Button>
+              )}
+              {enabled && (
+                <Button variant="outline" size="sm" onClick={() => setSendOpen(true)}>
+                  编辑配置
+                </Button>
+              )}
+              {enabled && (
+                <Button variant="outline" size="sm" onClick={fetchStatus} disabled={statusLoading}>
+                  {statusLoading ? '刷新中...' : '刷新'}
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                disabled={saving}
+                onClick={() => {
+                  if (enabled) {
+                    handleSave({ enabled: false });
+                  } else {
+                    setSendOpen(true);
+                  }
+                }}
+              >
+                {enabled ? '禁用' : '启用'}
+              </Button>
+            </div>
           </div>
 
           {enabled && (
-            <div
-              className="rounded-md bg-muted/50 p-3 space-y-1 text-sm cursor-pointer hover:bg-muted/70 transition-colors"
-              onClick={() => setSendOpen(true)}
-              title="点击编辑配置"
-            >
-              <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">目标地址</span>
-                <span className="font-medium truncate" title={targetUrl || '未配置'}>
-                  {targetUrl || '未配置'}
-                </span>
-              </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">同步间隔</span>
-                <span className="font-medium">{interval} 秒</span>
-              </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">推送端点</TableHead>
+                    <TableHead className="whitespace-nowrap">同步间隔</TableHead>
+                    <TableHead className="whitespace-nowrap">运行时长</TableHead>
+                    <TableHead className="whitespace-nowrap text-right">累计推送</TableHead>
+                    <TableHead className="whitespace-nowrap text-right">成功</TableHead>
+                    <TableHead className="whitespace-nowrap text-right">失败</TableHead>
+                    <TableHead className="whitespace-nowrap">最近推送时间</TableHead>
+                    {runtimeStatus?.send?.last_push_ok === false && (
+                      <TableHead className="whitespace-nowrap">最近错误</TableHead>
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
+                      {targetUrl ? `${targetUrl}/api/v1/sync/` : '未配置'}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{interval} 秒</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {statusLoading ? '...' : formatUptime(runtimeStatus?.send?.uptime_seconds ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      {statusLoading ? '...' : (runtimeStatus?.send?.total_pushes ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap text-emerald-600">
+                      {statusLoading ? '...' : (runtimeStatus?.send?.total_successes ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap text-red-500">
+                      {statusLoading ? '...' : (runtimeStatus?.send?.total_failures ?? 0)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">
+                      {statusLoading ? '...' : (runtimeStatus?.send?.last_push_at ? new Date(runtimeStatus.send.last_push_at * 1000).toLocaleString() : '暂无')}
+                    </TableCell>
+                    {runtimeStatus?.send?.last_push_ok === false && (
+                      <TableCell className="text-xs text-red-500 break-all whitespace-normal max-w-[200px]">
+                        {runtimeStatus?.send?.last_push_message || ''}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                </TableBody>
+              </Table>
             </div>
           )}
-
-          <div className="flex justify-end gap-2">
-            {enabled && (
-              <>
-                <StatusBadge status={sendStatus} text={sendStatusText} />
-                <Button variant="outline" size="sm" onClick={handleVerify} disabled={verifying}>
-                  {verifying ? '验证中...' : '验证连接'}
-                </Button>
-              </>
-            )}
-          </div>
 
           <Dialog open={sendOpen} onOpenChange={setSendOpen}>
             <DialogContent>
@@ -214,39 +316,79 @@ function SyncSettingsSection() {
                 initialInterval={interval}
                 onSave={handleSave}
                 saving={saving}
+                onVerify={handleVerify}
+                verifying={verifying}
               />
             </DialogContent>
           </Dialog>
         </CardContent>
       </Card>
 
+      {/* 接收数据同步 */}
       <Card>
-        <CardContent className="p-5">
+        <CardContent className="p-5 space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm font-semibold">接收数据同步</h3>
                 <StatusBadge
                   status={receiveEnabled ? 'ok' : 'disabled'}
-                  text={receiveEnabled ? '已启用' : '未启用'}
+                  text={receiveEnabled ? (receiveRuntimeEnabled ? '运行中' : '启动中...') : '未启用'}
                 />
               </div>
               <p className="text-sm text-muted-foreground">
                 允许其他 hermes-panel 将数据同步到本机
               </p>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              disabled={saving}
-              onClick={() => handleSave({ receiveEnabled: !receiveEnabled })}
-            >
-              {receiveEnabled ? '禁用' : '启用'}
-            </Button>
+            <div className="flex items-center gap-2">
+              {receiveEnabled && (
+                <Button variant="outline" size="sm" onClick={fetchStatus} disabled={statusLoading}>
+                  {statusLoading ? '刷新中...' : '刷新'}
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                disabled={saving}
+                onClick={() => handleSave({ receiveEnabled: !receiveEnabled })}
+              >
+                {receiveEnabled ? '禁用' : '启用'}
+              </Button>
+            </div>
           </div>
+
+          {receiveEnabled && (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">接收端点</TableHead>
+                    <TableHead className="whitespace-nowrap">运行时长</TableHead>
+                    <TableHead className="whitespace-nowrap text-right">累计接收</TableHead>
+                    <TableHead className="whitespace-nowrap">最近接收时间</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
+                      {statusLoading ? '...' : (runtimeStatus?.receive_url || '—')}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {statusLoading ? '...' : formatUptime(runtimeStatus?.uptime_seconds ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      {statusLoading ? '...' : (runtimeStatus?.total_payloads ?? 0)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">
+                      {statusLoading ? '...' : (runtimeStatus?.last_received_at ? new Date(runtimeStatus.last_received_at * 1000).toLocaleString() : '暂无')}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
-      </div>
     </div>
   );
 }
@@ -258,18 +400,23 @@ function SendSyncDialogForm({
   initialInterval,
   onSave,
   saving,
+  onVerify,
+  verifying,
 }: {
   initialHost: string;
   initialPort: string;
   initialToken: string;
   initialInterval: number;
   onSave: (updates: {
+    enabled: boolean;
     targetHost: string;
     targetPort: string;
     token: string;
     interval: number;
   }) => void;
   saving: boolean;
+  onVerify: () => void;
+  verifying: boolean;
 }) {
   const [host, setHost] = useState(initialHost);
   const [port, setPort] = useState(initialPort);
@@ -319,7 +466,10 @@ function SendSyncDialogForm({
         />
       </div>
       <DialogFooter>
-        <Button onClick={() => onSave({ targetHost: host, targetPort: port, token, interval })} disabled={saving}>
+        <Button variant="outline" onClick={onVerify} disabled={verifying || saving}>
+          {verifying ? '验证中...' : '验证连接'}
+        </Button>
+        <Button onClick={() => onSave({ enabled: true, targetHost: host, targetPort: port, token, interval })} disabled={saving}>
           {saving ? '保存中...' : '保存配置'}
         </Button>
       </DialogFooter>
@@ -369,6 +519,20 @@ function buildTargetUrl(host: string, port: string): string {
   const normalized = /^https?:\/\//i.test(h) ? h : `http://${h}`;
   if (!p) return normalized;
   return `${normalized}:${p}`;
+}
+
+function formatUptime(seconds: number): string {
+  if (seconds <= 0) return '0 秒';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  if (hours > 0) {
+    return `${hours} 小时 ${minutes} 分 ${secs} 秒`;
+  }
+  if (minutes > 0) {
+    return `${minutes} 分 ${secs} 秒`;
+  }
+  return `${secs} 秒`;
 }
 
 function UserSettingsSection() {

@@ -12,6 +12,7 @@ import logging
 import re
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -30,9 +31,31 @@ logger = logging.getLogger(__name__)
 _DAILY_DAYS = 15
 _TOP_N = 5
 
+# Fields in the profiles table that are stored as JSON strings.
+_JSON_FIELDS = {"model_top5", "provider_top5", "daily_tokens", "components"}
+
+# Default values for JSON fields when parsing fails.
+_JSON_DEFAULTS = {
+    "model_top5": [],
+    "provider_top5": [],
+    "daily_tokens": [],
+    "components": {},
+}
+
+
+def _load_json_field(row, field: str):
+    """Load a JSON field from a database row with safe fallback."""
+    try:
+        value = json.loads(row[field])
+        return value
+    except Exception:
+        return _JSON_DEFAULTS.get(field, {})
+
 
 class ProfileStatsService:
     """Service for collecting and querying profile statistics."""
+
+    _collect_lock = threading.Lock()
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -60,16 +83,27 @@ class ProfileStatsService:
             return None
         try:
             env = get_clean_env(self.hermes_home)
+            full_cmd = [hermes, "config", "check"]
+            logger.info("_latest_config_version: running cmd=%s", full_cmd)
             result = subprocess.run(
-                [hermes, "config", "check"],
+                full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=15,
                 env=env,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+            logger.error("_latest_config_version: cmd=%s failed: %s", full_cmd, exc)
             return None
+        logger.info(
+            "_latest_config_version: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+            full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+        )
         if result.returncode != 0:
+            logger.warning(
+                "_latest_config_version: cmd=%s rc=%d stderr=%s",
+                full_cmd, result.returncode, result.stderr[:500],
+            )
             return None
         # Output line looks like: "  Config version: 30 → 33 (update available)"
         for line in result.stdout.splitlines():
@@ -79,8 +113,118 @@ class ProfileStatsService:
                 return self._cached_latest_version
         return None
 
+    def _collect_memory_status(self, profile: str) -> dict:
+        """Run ``hermes -p <profile> memory status`` and extract the four
+        values we persist in the profiles table.
+
+        Returns a dict with keys: available (bool|None), provider (str|None),
+        endpoint (str|None), agent (str|None).  All None on failure.
+        """
+        hermes = find_command("hermes")
+        if not hermes:
+            return {"available": None, "provider": None, "endpoint": None, "agent": None}
+        try:
+            env = get_clean_env(self.hermes_home)
+            full_cmd = [hermes, "-p", profile, "memory", "status"]
+            logger.info("_collect_memory_status: running cmd=%s", full_cmd)
+            result = subprocess.run(
+                full_cmd,
+                capture_output=True, text=True, timeout=30, env=env,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+            logger.error("_collect_memory_status: cmd=%s failed: %s", full_cmd, exc)
+            return {"available": None, "provider": None, "endpoint": None, "agent": None}
+        logger.info(
+            "_collect_memory_status: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+            full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "_collect_memory_status: cmd=%s rc=%d stderr=%s",
+                full_cmd, result.returncode, result.stderr[:500],
+            )
+            return {"available": None, "provider": None, "endpoint": None, "agent": None}
+
+        text = result.stdout.strip()
+        provider = None
+        endpoint = None
+        agent = None
+        available = None
+        in_provider_config = False
+
+        for raw_line in text.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if line.startswith("  Provider:"):
+                m = re.search(r"Provider:\s*(\S+)", line)
+                provider = m.group(1) if m else None
+                in_provider_config = False
+                continue
+
+            if stripped.endswith(" config:") and provider:
+                in_provider_config = True
+                continue
+
+            if line.startswith("  Status:"):
+                available = "available" in stripped.lower() or "✓" in stripped
+                in_provider_config = False
+                continue
+
+            if in_provider_config and ":" in line:
+                key, _, value = line.partition(":")
+                key = key.strip()
+                value = value.strip()
+                if key == "endpoint":
+                    endpoint = value
+                elif key == "agent":
+                    agent = value
+
+        return {
+            "available": available,
+            "provider": provider,
+            "endpoint": endpoint,
+            "agent": agent,
+        }
+
     def collect_local_stats(self) -> None:
-        """Scan local profiles and upsert their statistics into the profiles DB."""
+        """Full collection: all profile stats + memory status (hourly).
+
+        Guarded by a class-level lock so the background refresh loop and a
+        synchronous API refresh request can't run concurrently and cause
+        ``database is locked`` errors.
+        """
+        if not ProfileStatsService._collect_lock.acquire(blocking=False):
+            logger.info("collect_local_stats: another collection is already running, skipping")
+            return
+        try:
+            self._collect_impl(full=True)
+        finally:
+            ProfileStatsService._collect_lock.release()
+
+    def collect_fast_stats(self) -> None:
+        """Fast collection: only token/gateway data (every 10 min).
+
+        Skips memory status, config version, model/provider breakdowns —
+        those are refreshed by the full hourly cycle.
+        """
+        if not ProfileStatsService._collect_lock.acquire(blocking=False):
+            logger.info("collect_fast_stats: another collection is already running, skipping")
+            return
+        try:
+            self._collect_impl(full=False)
+        finally:
+            ProfileStatsService._collect_lock.release()
+
+    def _collect_impl(self, full: bool) -> None:
+        """Actual collection logic (called under the lock).
+
+        When *full* is True, collects all fields including memory status,
+        config version, model/provider top5.  When False, only collects
+        gateway status and token totals (the fast path).
+        """
         profile_svc = ProfileService(self.hermes_home)
         gateway_svc = GatewayService()
         state_reader = StateReader(self.hermes_home)
@@ -90,53 +234,76 @@ class ProfileStatsService:
         ip = get_primary_ip()
         now = time.time()
         collected = 0
+        mode = "full" if full else "fast"
 
         logger.info(
-            "collect_local_stats: start scan host=%s user=%s ip=%s profiles=%d",
-            host, username, ip, len(profiles),
+            "collect_local_stats(%s): start scan host=%s user=%s ip=%s profiles=%d",
+            mode, host, username, ip, len(profiles),
         )
 
         with connect(self.db_path) as conn:
             for profile in profiles:
                 info = profile_svc.get_profile_info(profile)
                 if not info.exists:
-                    logger.debug("collect_local_stats: skip non-existent profile=%s", profile)
+                    logger.debug("collect_local_stats(%s): skip non-existent profile=%s", mode, profile)
                     continue
 
                 gw = gateway_svc.get_status(profile)
                 token_data = state_reader.get_dashboard_data(profile)
                 summary = token_data.get("summary", {})
 
-                model_top5 = self._top_n_by_tokens(token_data.get("by_model", []))
-                provider_top5 = self._top_n_by_tokens(token_data.get("by_provider", []))
-                daily = token_data.get("daily", [])
-                daily_last15 = daily[-_DAILY_DAYS:] if len(daily) > _DAILY_DAYS else daily
-
                 total_tokens = int(summary.get("total_tokens", 0))
 
-                self._upsert(
-                    conn,
-                    host=host,
-                    username=username,
-                    ip=ip,
-                    profile_name=profile,
-                    path=str(profile_svc.profile_root(profile)),
-                    gateway_status="running" if gw.running else "stopped",
-                    session_count=int(summary.get("total_sessions", 0)),
-                    total_tokens=total_tokens,
-                    total_input_tokens=int(summary.get("total_input_tokens", 0)),
-                    total_output_tokens=int(summary.get("total_output_tokens", 0)),
-                    cache_hit_rate=float(summary.get("cache_hit_rate", 0.0)),
-                    model_top5=model_top5,
-                    provider_top5=provider_top5,
-                    daily_tokens=daily_last15,
-                    current_config_version=profile_svc.get_config_version(profile),
-                    latest_config_version=self._latest_config_version(),
-                    updated_at=now,
-                )
+                if full:
+                    model_top5 = self._top_n_by_tokens(token_data.get("by_model", []))
+                    provider_top5 = self._top_n_by_tokens(token_data.get("by_provider", []))
+                    daily = token_data.get("daily", [])
+                    daily_last15 = daily[-_DAILY_DAYS:] if len(daily) > _DAILY_DAYS else daily
+                    mem_status = self._collect_memory_status(profile)
+
+                    self.upsert(
+                        conn,
+                        host=host,
+                        username=username,
+                        ip=ip,
+                        profile_name=profile,
+                        path=str(profile_svc.profile_root(profile)),
+                        gateway_status="running" if gw.running else "stopped",
+                        session_count=int(summary.get("total_sessions", 0)),
+                        total_tokens=total_tokens,
+                        total_input_tokens=int(summary.get("total_input_tokens", 0)),
+                        total_output_tokens=int(summary.get("total_output_tokens", 0)),
+                        cache_hit_rate=float(summary.get("cache_hit_rate", 0.0)),
+                        model_top5=model_top5,
+                        provider_top5=provider_top5,
+                        daily_tokens=daily_last15,
+                        current_config_version=profile_svc.get_config_version(profile),
+                        latest_config_version=self._latest_config_version(),
+                        memory_available=mem_status["available"],
+                        memory_provider=mem_status["provider"],
+                        memory_endpoint=mem_status["endpoint"],
+                        memory_agent=mem_status["agent"],
+                        updated_at=now,
+                    )
+                else:
+                    self.upsert_fast(
+                        conn,
+                        host=host,
+                        username=username,
+                        ip=ip,
+                        profile_name=profile,
+                        gateway_status="running" if gw.running else "stopped",
+                        session_count=int(summary.get("total_sessions", 0)),
+                        total_tokens=total_tokens,
+                        total_input_tokens=int(summary.get("total_input_tokens", 0)),
+                        total_output_tokens=int(summary.get("total_output_tokens", 0)),
+                        cache_hit_rate=float(summary.get("cache_hit_rate", 0.0)),
+                        updated_at=now,
+                    )
                 collected += 1
                 logger.info(
-                    "collect_local_stats: upserted profile=%s gw=%s tokens=%d sessions=%s",
+                    "collect_local_stats(%s): upserted profile=%s gw=%s tokens=%d sessions=%s",
+                    mode,
                     profile,
                     "running" if gw.running else "stopped",
                     total_tokens,
@@ -145,8 +312,8 @@ class ProfileStatsService:
 
         # commit happens implicitly on context exit; log a compact summary
         logger.info(
-            "collect_local_stats: done collected=%d/%d elapsed=%.2fs",
-            collected, len(profiles), round(time.time() - now, 2),
+            "collect_local_stats(%s): done collected=%d/%d elapsed=%.2fs",
+            mode, collected, len(profiles), round(time.time() - now, 2),
         )
 
     def get_all_stats(self, accessible_profiles: list[str] | None = None) -> list[Profile]:
@@ -204,7 +371,7 @@ class ProfileStatsService:
         return sorted_items[:_TOP_N]
 
     @staticmethod
-    def _upsert(
+    def upsert(
         conn,
         host: str | None,
         username: str | None,
@@ -222,7 +389,11 @@ class ProfileStatsService:
         daily_tokens: list[dict],
         current_config_version: int | None,
         latest_config_version: int | None,
-        updated_at: float,
+        memory_available: bool | None = None,
+        memory_provider: str | None = None,
+        memory_endpoint: str | None = None,
+        memory_agent: str | None = None,
+        updated_at: float = 0,
     ) -> None:
         conn.execute(
             """
@@ -230,8 +401,9 @@ class ProfileStatsService:
                 host, username, ip, profile_name, path, gateway_status, session_count,
                 total_tokens, total_input_tokens, total_output_tokens, cache_hit_rate,
                 model_top5, provider_top5, daily_tokens, current_config_version,
-                latest_config_version, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                latest_config_version, memory_available, memory_provider,
+                memory_endpoint, memory_agent, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(host, username, ip, profile_name) DO UPDATE SET
                 path=excluded.path,
                 gateway_status=excluded.gateway_status,
@@ -245,6 +417,10 @@ class ProfileStatsService:
                 daily_tokens=excluded.daily_tokens,
                 current_config_version=excluded.current_config_version,
                 latest_config_version=excluded.latest_config_version,
+                memory_available=excluded.memory_available,
+                memory_provider=excluded.memory_provider,
+                memory_endpoint=excluded.memory_endpoint,
+                memory_agent=excluded.memory_agent,
                 updated_at=excluded.updated_at
             """,
             (
@@ -264,19 +440,69 @@ class ProfileStatsService:
                 json.dumps(daily_tokens),
                 current_config_version,
                 latest_config_version,
+                memory_available,
+                memory_provider,
+                memory_endpoint,
+                memory_agent,
+                updated_at,
+            ),
+        )
+
+    @staticmethod
+    def upsert_fast(
+        conn,
+        host: str | None,
+        username: str | None,
+        ip: str | None,
+        profile_name: str,
+        gateway_status: str | None,
+        session_count: int,
+        total_tokens: int,
+        total_input_tokens: int,
+        total_output_tokens: int,
+        cache_hit_rate: float,
+        updated_at: float,
+    ) -> None:
+        """Upsert only the fast-changing columns (gateway + token totals).
+
+        Used by the 10-minute background cycle.  Slow-changing fields
+        (model/provider top5, daily_tokens, config version, memory status)
+        are left untouched — they're refreshed by the hourly full cycle.
+        """
+        conn.execute(
+            """
+            INSERT INTO profiles (
+                host, username, ip, profile_name,
+                gateway_status, session_count, total_tokens,
+                total_input_tokens, total_output_tokens, cache_hit_rate,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(host, username, ip, profile_name) DO UPDATE SET
+                gateway_status=excluded.gateway_status,
+                session_count=excluded.session_count,
+                total_tokens=excluded.total_tokens,
+                total_input_tokens=excluded.total_input_tokens,
+                total_output_tokens=excluded.total_output_tokens,
+                cache_hit_rate=excluded.cache_hit_rate,
+                updated_at=excluded.updated_at
+            """,
+            (
+                host,
+                username,
+                ip,
+                profile_name,
+                gateway_status,
+                session_count,
+                total_tokens,
+                total_input_tokens,
+                total_output_tokens,
+                cache_hit_rate,
                 updated_at,
             ),
         )
 
 
 def _row_to_profile(row) -> Profile:
-    def _load_json(field: str):
-        try:
-            value = json.loads(row[field])
-            return value
-        except Exception:
-            return [] if field in ("model_top5", "provider_top5", "daily_tokens") else {}
-
     return Profile(
         id=row["id"],
         host=row["host"],
@@ -290,17 +516,16 @@ def _row_to_profile(row) -> Profile:
         total_input_tokens=row["total_input_tokens"],
         total_output_tokens=row["total_output_tokens"],
         cache_hit_rate=row["cache_hit_rate"],
-        model_top5=_load_json("model_top5"),
-        provider_top5=_load_json("provider_top5"),
-        daily_tokens=_load_json("daily_tokens"),
+        model_top5=_load_json_field(row, "model_top5"),
+        provider_top5=_load_json_field(row, "provider_top5"),
+        daily_tokens=_load_json_field(row, "daily_tokens"),
         hermes_version=row["hermes_version"],
-        components=_load_json("components"),
+        components=_load_json_field(row, "components"),
         current_config_version=row["current_config_version"],
         latest_config_version=row["latest_config_version"],
+        memory_available=row["memory_available"],
+        memory_provider=row["memory_provider"],
+        memory_endpoint=row["memory_endpoint"],
+        memory_agent=row["memory_agent"],
         updated_at=row["updated_at"],
     )
-
-    @staticmethod
-    def _latest_config_version(self) -> int:
-        """Return the latest config version for the current host."""
-        return self.get_config_version(self.get_profile_name())

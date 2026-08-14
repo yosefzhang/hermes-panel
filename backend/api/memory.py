@@ -32,8 +32,12 @@ def get_memory(
         path = root / "memories" / filename
         if path.exists():
             content = path.read_text(encoding="utf-8")
-            memories[filename.removesuffix(".md")] = content[:500]
-    return {"config": service.read_section(profile_name, "memory"), "memories": memories}
+            memories[filename.removesuffix(".md")] = content
+
+    return {
+        "config": service.read_section(profile_name, "memory"),
+        "memories": memories,
+    }
 
 
 @router.put("")

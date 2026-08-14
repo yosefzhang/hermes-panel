@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -153,6 +154,8 @@ class SkillService:
         self.profiles = ProfileService()
         self.yaml = YAML(typ="safe")
 
+    _logger = logging.getLogger(__name__)
+
     # ── listing ────────────────────────────────────────────
 
     def list_skills(self, profile: str | None = None) -> list[dict]:
@@ -207,17 +210,28 @@ class SkillService:
             return set()
         env = get_profile_env(profile or "default", self.profiles.hermes_home)
         env["COLUMNS"] = "400"
+        full_cmd = [*cmd, "skills", "list-modified"]
+        self._logger.info("list_modified_names: running cmd=%s", full_cmd)
         try:
             result = subprocess.run(
-                [*cmd, "skills", "list-modified"],
+                full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=30,
                 env=env,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+            self._logger.error("list_modified_names: cmd=%s failed: %s", full_cmd, exc)
             return set()
+        self._logger.info(
+            "list_modified_names: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+            full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+        )
         if result.returncode != 0:
+            self._logger.warning(
+                "list_modified_names: cmd=%s rc=%d stderr=%s stdout=%s",
+                full_cmd, result.returncode, result.stderr[:500], result.stdout[:500],
+            )
             return set()
         return {
             stripped[2:].strip()
@@ -232,17 +246,28 @@ class SkillService:
             return []
         env = get_profile_env(profile or "default", self.profiles.hermes_home)
         env["COLUMNS"] = "400"  # avoid truncation of long names
+        full_cmd = [*cmd, "skills", "list"]
+        self._logger.info("list_skills_cli: running cmd=%s", full_cmd)
         try:
             result = subprocess.run(
-                [*cmd, "skills", "list"],
+                full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=30,
                 env=env,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+            self._logger.error("list_skills_cli: cmd=%s failed: %s", full_cmd, exc)
             return []
+        self._logger.info(
+            "list_skills_cli: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+            full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+        )
         if result.returncode != 0:
+            self._logger.warning(
+                "list_skills_cli: cmd=%s rc=%d stderr=%s stdout=%s",
+                full_cmd, result.returncode, result.stderr[:500], result.stdout[:500],
+            )
             return []
         return _parse_skills_table(result.stdout)
 
@@ -334,7 +359,11 @@ class SkillService:
         if not content.startswith("---\n"):
             return {}, content
         _, frontmatter_text, body = content.split("---", 2)
-        return self.yaml.load(frontmatter_text) or {}, body.lstrip("\n")
+        try:
+            return self.yaml.load(frontmatter_text) or {}, body.lstrip("\n")
+        except Exception as exc:
+            self._logger.warning("_parse: YAML parse failed: %s", exc)
+            return {}, body.lstrip("\n")
 
     def _load_config(self, profile: str | None) -> dict:
         path = self.profiles.get_config_path(profile)

@@ -124,6 +124,35 @@ export const api = {
     });
     return data;
   },
+  triggerSyncPush: async () => {
+    const { data } = await apiClient.post<{ ok: boolean; status?: number; message?: string }>('/sync/push');
+    return data;
+  },
+  syncStatus: async () => {
+    const { data } = await apiClient.get<{
+      enabled: boolean;
+      enabled_at: number | null;
+      uptime_seconds: number;
+      last_received_at: number | null;
+      last_profiles_count: number;
+      last_hosts_count: number;
+      total_payloads: number;
+      receive_url: string;
+      port: number;
+      send: {
+        enabled: boolean;
+        enabled_at: number | null;
+        uptime_seconds: number;
+        last_push_at: number | null;
+        last_push_ok: boolean | null;
+        last_push_message: string | null;
+        total_pushes: number;
+        total_successes: number;
+        total_failures: number;
+      };
+    }>('/sync/status');
+    return data;
+  },
   listAuditLogs: async (limit = 50) => {
     const { data } = await apiClient.get<{ logs: Array<{ id: number; timestamp: number; actor: string; action: string; target_type: string | null; target_id: string | null; details: Record<string, unknown>; success: boolean | null; ip_address: string | null }> }>('/audit-logs', { params: { limit } });
     return data.logs;
@@ -158,6 +187,8 @@ export const api = {
           daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
           current_config_version: number | null;
           latest_config_version: number | null;
+          memory_available: boolean | null;
+          memory_provider: string | null;
           updated_at: number;
         }>;
       }>;
@@ -193,6 +224,8 @@ export const api = {
           daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
           current_config_version: number | null;
           latest_config_version: number | null;
+          memory_available: boolean | null;
+          memory_provider: string | null;
           updated_at: number;
         }>;
       }>;

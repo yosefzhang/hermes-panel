@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { BarChart3, Box, Server, Zap } from 'lucide-react';
+import { Check, X, Box, Server, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -37,6 +37,8 @@ interface ProfileStat {
   daily_tokens: DailyToken[];
   current_config_version: number | null;
   latest_config_version: number | null;
+  memory_available: boolean | null;
+  memory_provider: string | null;
   updated_at: number;
 }
 
@@ -118,6 +120,23 @@ function ConfigVersionBadge({ current, latest }: { current: number | null; lates
   );
 }
 
+function MemoryBadge({ available, provider }: { available: boolean | null; provider: string | null }) {
+  if (!available) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs">
+        <X className="h-3 w-3 text-red-500" />
+        未启用
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-xs">
+      <Check className="h-3 w-3 text-emerald-500" />
+      {provider || '已启用'}
+    </span>
+  );
+}
+
 function ServerSection({ server }: { server: Server }) {
   const componentEntries = Object.entries(server.components || {});
 
@@ -167,6 +186,7 @@ function ServerSection({ server }: { server: Server }) {
                 <TableHead className="whitespace-nowrap">主机</TableHead>
                 <TableHead className="whitespace-nowrap">路径</TableHead>
                 <TableHead className="whitespace-nowrap">配置版本</TableHead>
+                <TableHead className="whitespace-nowrap">记忆体</TableHead>
                 <TableHead className="whitespace-nowrap">网关状态</TableHead>
                 <TableHead className="whitespace-nowrap text-right">会话数</TableHead>
                 <TableHead className="whitespace-nowrap text-right">总Token</TableHead>
@@ -188,6 +208,12 @@ function ServerSection({ server }: { server: Server }) {
                     <ConfigVersionBadge
                       current={stat.current_config_version}
                       latest={stat.latest_config_version}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <MemoryBadge
+                      available={stat.memory_available}
+                      provider={stat.memory_provider}
                     />
                   </TableCell>
                   <TableCell>
@@ -215,14 +241,7 @@ export default function ProfileStats() {
 
   return (
     <PageContainer>
-      <PageHeader
-        extra={
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <BarChart3 className="h-4 w-4" />
-            <span>按服务器聚合</span>
-          </div>
-        }
-      />
+      <PageHeader />
       {loading && <Loading className="py-12" />}
       {!loading && error && <ErrorAlert message={error} />}
       {!loading && data && (

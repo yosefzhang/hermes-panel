@@ -3,10 +3,12 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BarChart3,
+  BookOpen,
   Brain,
   ChevronDown,
   ChevronRight,
   Command,
+  Database,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -48,6 +50,8 @@ const categoryIcons: Record<string, React.ElementType> = {
   channels: MessageCircle,
   skills: Wrench,
   plugins: Puzzle,
+  memory: Database,
+  soul: BookOpen,
 };
 
 function routeLabel(pathname: string): string {
@@ -293,7 +297,6 @@ export default function AppLayout() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-foreground truncate">{user?.username ?? 'User'}</div>
-            <div className="text-xs text-muted-foreground truncate">{user?.role ?? ''}</div>
           </div>
           <button
             onClick={() => {
