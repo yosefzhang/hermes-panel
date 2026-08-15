@@ -55,6 +55,7 @@ make dev          # 启动开发环境（后端 + 前端）
 make dev-backend  # 仅启动后端
 make dev-frontend # 仅启动前端
 make build        # 构建前端
+make prod         # 生产模式：构建前端并由后端 serve（单端口 8650，无热重载）
 make test         # 运行后端测试（pytest backend/tests）
 make lint         # ruff + tsc 类型检查
 make clean        # 清理构建产物

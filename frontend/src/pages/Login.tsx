@@ -13,13 +13,16 @@ export default function Login() {
   const { toast } = useToast();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     try {
       await login(username, password);
       navigate('/dashboard');
     } catch {
+      setError('用户名或密码不正确');
       toast({
         variant: 'destructive',
         title: '登录失败',
@@ -55,6 +58,11 @@ export default function Login() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            {error && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            )}
             <div className="space-y-2">
               <label htmlFor="username" className="text-sm font-medium text-foreground/80">
                 用户名
@@ -63,7 +71,6 @@ export default function Login() {
                 id="username"
                 type="text"
                 autoComplete="username"
-                placeholder="admin"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
@@ -78,7 +85,6 @@ export default function Login() {
                 id="password"
                 type="password"
                 autoComplete="current-password"
-                placeholder="••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

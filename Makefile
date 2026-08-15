@@ -1,4 +1,4 @@
-.PHONY: install ensure-dev-env ensure-backend-deps ensure-frontend-deps dev dev-backend dev-frontend build test lint clean stop
+.PHONY: install ensure-dev-env ensure-backend-deps ensure-frontend-deps dev dev-backend dev-frontend build prod test lint clean stop
 
 install:
 	python3 -m venv .venv
@@ -36,6 +36,10 @@ dev-frontend:
 
 build:
 	cd frontend && npm run build
+
+prod: ensure-backend-deps build
+	@echo "Starting production server on :8650 (serving frontend dist + API)..."
+	. .venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port 8650
 
 test:
 	. .venv/bin/activate && pytest backend/tests -v

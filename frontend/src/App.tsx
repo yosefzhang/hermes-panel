@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useParams 
 import { Spin } from 'antd';
 import AppLayout from './components/AppLayout';
 import ErrorBoundary from './components/ErrorBoundary';
+import { ToastProvider, ToastViewport } from '@/components/ui/toast';
 import { useAuthStore } from './store/authStore';
 import { useConfigStore } from './store/configStore';
 
@@ -65,29 +66,32 @@ function ProfileRouteWrapper() {
 
 export default function App() {
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <ErrorBoundary>
-        <Suspense fallback={<div className="centered"><Spin /></div>}>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/" element={<RequireAuth><AppLayout /></RequireAuth>}>
-              <Route index element={<Navigate to="/dashboard" replace />} />
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="profiles" element={<ProfileStats />} />
-              <Route path="settings" element={<Settings />} />
-              <Route path=":profile" element={<ProfileRouteWrapper />}>
-                <Route path="models" element={<ModelsConfig />} />
-                <Route path="channels" element={<ChannelsConfig />} />
-                <Route path="skills" element={<SkillsManager />} />
-                <Route path="plugins" element={<PluginsManager />} />
-                <Route path="memory" element={<MemoryConfig />} />
-                <Route path="soul" element={<SoulPage />} />
-                <Route index element={<Navigate to="models" replace />} />
+    <ToastProvider>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <ErrorBoundary>
+          <Suspense fallback={<div className="centered"><Spin /></div>}>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/" element={<RequireAuth><AppLayout /></RequireAuth>}>
+                <Route index element={<Navigate to="/dashboard" replace />} />
+                <Route path="dashboard" element={<Dashboard />} />
+                <Route path="profiles" element={<ProfileStats />} />
+                <Route path="settings" element={<Settings />} />
+                <Route path=":profile" element={<ProfileRouteWrapper />}>
+                  <Route path="models" element={<ModelsConfig />} />
+                  <Route path="channels" element={<ChannelsConfig />} />
+                  <Route path="skills" element={<SkillsManager />} />
+                  <Route path="plugins" element={<PluginsManager />} />
+                  <Route path="memory" element={<MemoryConfig />} />
+                  <Route path="soul" element={<SoulPage />} />
+                  <Route index element={<Navigate to="models" replace />} />
+                </Route>
               </Route>
-            </Route>
-          </Routes>
-        </Suspense>
-      </ErrorBoundary>
-    </BrowserRouter>
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
+      </BrowserRouter>
+      <ToastViewport />
+    </ToastProvider>
   );
 }

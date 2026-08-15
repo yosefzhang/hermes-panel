@@ -270,6 +270,7 @@ function SyncSettingsSection() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="whitespace-nowrap">推送端点</TableHead>
+                    <TableHead className="whitespace-nowrap">发送 Token</TableHead>
                     <TableHead className="whitespace-nowrap">同步间隔</TableHead>
                     <TableHead className="whitespace-nowrap text-right">累计推送</TableHead>
                     <TableHead className="whitespace-nowrap text-right">成功</TableHead>
@@ -284,6 +285,9 @@ function SyncSettingsSection() {
                   <TableRow>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
                       {targetUrl ? `${targetUrl}/api/v1/sync/` : '未配置'}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[200px]">
+                      {sendToken || '未配置'}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{interval} 秒</TableCell>
                     <TableCell className="text-right whitespace-nowrap">
