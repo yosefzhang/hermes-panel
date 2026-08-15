@@ -51,22 +51,27 @@ export default function PluginsManager() {
   const [pluginToDelete, setPluginToDelete] = useState<{ key: string; name: string } | null>(null);
 
   const fetchPlugins = useCallback(
-    () =>
-      apiClient.get<PluginsResponse>('/plugins', { params: { profile: activeProfile } }).then((res) => {
-        if (res.data.error) {
-          throw new Error(res.data.error);
-        }
-        const plugins = res.data.plugins || [];
-        const nameCount: Record<string, number> = {};
-        return plugins.map((plugin) => {
-          const count = (nameCount[plugin.name] || 0) + 1;
-          nameCount[plugin.name] = count;
-          return {
-            ...plugin,
-            key: count > 1 ? `${plugin.name}-${count}` : plugin.name,
-          };
-        });
-      }),
+    (force?: boolean) =>
+      apiClient
+        .get<PluginsResponse>('/plugins', {
+          params: { profile: activeProfile },
+          ...(force ? { refresh: true } : {}),
+        })
+        .then((res) => {
+          if (res.data.error) {
+            throw new Error(res.data.error);
+          }
+          const plugins = res.data.plugins || [];
+          const nameCount: Record<string, number> = {};
+          return plugins.map((plugin) => {
+            const count = (nameCount[plugin.name] || 0) + 1;
+            nameCount[plugin.name] = count;
+            return {
+              ...plugin,
+              key: count > 1 ? `${plugin.name}-${count}` : plugin.name,
+            };
+          });
+        }),
     [activeProfile],
   );
 
@@ -124,7 +129,7 @@ export default function PluginsManager() {
         title: '成功',
         description: action === 'enable' ? '已启用' : '已停用',
       });
-      reload();
+      reload(true);
     } catch (err: any) {
       toast({
         variant: 'destructive',
@@ -155,7 +160,7 @@ export default function PluginsManager() {
         title: '成功',
         description: `${pluginToDelete.name} 已删除`,
       });
-      reload();
+      reload(true);
     } catch (err: any) {
       toast({
         variant: 'destructive',
@@ -169,7 +174,7 @@ export default function PluginsManager() {
   };
 
   const handleRescan = async () => {
-    await reload();
+    await reload(true);
     toast({
       title: '成功',
       description: '插件列表已重新扫描',

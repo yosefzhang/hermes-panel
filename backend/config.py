@@ -120,8 +120,8 @@ class Settings(BaseModel):
     # Data sync to another hermes-panel instance.
     # When enabled, local host_info and profile_info tables are periodically
     # POSTed to the configured target panel.
-    # Inbound sync is accepted at /api/v1/sync/ (panel-to-panel) and
-    # /api/v1/webhook/sync (external systems); both verify the receive token.
+    # Inbound sync is accepted at /api/v1/sync/ (panel-to-panel and external
+    # systems alike); it verifies the receive token.
     sync_enabled: bool = False
     sync_receive_enabled: bool = False
     sync_target_url: str | None = None

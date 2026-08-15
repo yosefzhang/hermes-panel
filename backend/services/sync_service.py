@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
+import string
 import time
 
 import urllib3
 
-from backend.config import Settings
+from backend.config import Settings, update_config_file
 from backend.db.database import connect
 from backend.services.host_info_service import HostInfoService, make_server_id
 from backend.services.profile_stats_service import ProfileStatsService
@@ -30,11 +32,12 @@ _receive_state: dict = {
     "total_payloads": 0,
 }
 
-# In-memory state for the send sync "process".  Send sync runs as an asyncio
-# background loop (_run_sync_loop); we track when it was enabled and the last
-# push result so the UI can display "process" status.
+# In-memory state for the send sync "process".  Send sync is not a separate
+# process or a heartbeat: the main FastAPI process runs a periodic loop that,
+# when enabled, does one push at the configured interval and records the
+# outcome here so the UI can show counters and the last push result.
 _send_state: dict = {
-    "enabled_at": None,
+    "enabled": False,
     "last_push_at": None,
     "last_push_ok": None,
     "last_push_message": None,
@@ -56,11 +59,11 @@ def set_receive_enabled(enabled: bool) -> None:
 
 def set_send_enabled(enabled: bool) -> None:
     """Update send-sync runtime state when the setting is toggled."""
-    if enabled and _send_state["enabled_at"] is None:
-        _send_state["enabled_at"] = time.time()
+    if enabled and not _send_state["enabled"]:
+        _send_state["enabled"] = True
         logger.info("Send sync enabled - now pushing local stats to target panel")
-    elif not enabled and _send_state["enabled_at"] is not None:
-        _send_state["enabled_at"] = None
+    elif not enabled and _send_state["enabled"]:
+        _send_state["enabled"] = False
         logger.info("Send sync disabled - no longer pushing to target panel")
 
 
@@ -73,8 +76,8 @@ def initialize_receive_state_from_settings(settings: Settings) -> None:
 
 def initialize_send_state_from_settings(settings: Settings) -> None:
     """Restore send-sync runtime state from persisted settings on startup."""
-    if settings.sync_enabled and _send_state["enabled_at"] is None:
-        _send_state["enabled_at"] = time.time()
+    if settings.sync_enabled and not _send_state["enabled"]:
+        _send_state["enabled"] = True
         logger.info("Send sync restored from settings - now pushing to target panel")
 
 
@@ -88,6 +91,26 @@ def record_push_result(ok: bool, message: str | None = None) -> None:
         _send_state["total_successes"] += 1
     else:
         _send_state["total_failures"] += 1
+
+
+def ensure_receive_token(settings: Settings) -> str:
+    """Return the configured receive token.
+
+    When none is configured, generate a random 16-character token, persist it
+    to config.yaml and update the in-memory settings so senders always have a
+    stable token to authenticate with.
+    """
+    if settings.sync_receive_token:
+        return settings.sync_receive_token
+    alphabet = string.ascii_letters + string.digits
+    token = "".join(secrets.choice(alphabet) for _ in range(16))
+    try:
+        update_config_file({"sync": {"receive_token": token}})
+    except Exception:
+        logger.exception("ensure_receive_token: failed to persist generated token")
+    settings.sync_receive_token = token
+    logger.info("ensure_receive_token: generated a new 16-char receive token")
+    return token
 
 
 def get_receive_status() -> dict:
@@ -106,11 +129,8 @@ def get_receive_status() -> dict:
 
 def get_send_status() -> dict:
     """Return current send-sync runtime status."""
-    enabled_at = _send_state["enabled_at"]
     return {
-        "enabled": enabled_at is not None,
-        "enabled_at": enabled_at,
-        "uptime_seconds": round(time.time() - enabled_at, 1) if enabled_at else 0,
+        "enabled": _send_state["enabled"],
         "last_push_at": _send_state["last_push_at"],
         "last_push_ok": _send_state["last_push_ok"],
         "last_push_message": _send_state["last_push_message"],

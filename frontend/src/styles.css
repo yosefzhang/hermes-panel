@@ -139,6 +139,16 @@ body {
   background-color: hsl(var(--muted) / 0.5);
 }
 
+/* 同步设置页「用法示例」：Markdown 内容与页面正文同号（14px），
+   不压缩代码块字号。 */
+.markdown-usage,
+.markdown-usage p,
+.markdown-usage pre,
+.markdown-usage code,
+.markdown-usage pre code {
+  font-size: 14px;
+}
+
 .env-var-row:hover {
   background-color: hsl(var(--muted));
 }

@@ -38,6 +38,24 @@ CHANNEL_ENV_ALT_MARKERS: dict[str, list[str]] = {
     "weixin": ["WEIXIN_TOKEN"],
 }
 
+# 可编辑的渠道环境变量字段（按渠道分组，供单渠道与批量端点共用）
+CHANNEL_ENV_FIELDS: dict[str, list[str]] = {
+    "feishu": [
+        "FEISHU_APP_ID",
+        "FEISHU_APP_SECRET",
+        "FEISHU_VERIFICATION_TOKEN",
+        "FEISHU_ENCRYPT_KEY",
+    ],
+    "weixin": [
+        "WEIXIN_ACCOUNT_ID",
+        "WEIXIN_TOKEN",
+        "WEIXIN_ENCODING_AES_KEY",
+    ],
+    "telegram": ["TELEGRAM_BOT_TOKEN"],
+    "discord": ["DISCORD_BOT_TOKEN"],
+    "slack": ["SLACK_BOT_TOKEN"],
+}
+
 
 def _read_env_vars_for_profile(profile: str | None, hermes_home: Path | None = None) -> dict[str, str]:
     """读取 profile 的 .env 文件"""
@@ -218,6 +236,24 @@ def get_channels(
     return result
 
 
+@router.get("/env")
+def get_channels_env(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    """一次性返回所有可编辑渠道的环境变量字段，避免前端逐个渠道请求造成 N+1。"""
+    safe_profile = ensure_profile_access(user, profile)
+    env_svc = EnvService(hermes_home=service.profiles.hermes_home)
+    env_vars = env_svc.read_env(safe_profile)
+    result: dict[str, dict[str, str]] = {}
+    for name, fields in CHANNEL_ENV_FIELDS.items():
+        found = {field: env_vars[field] for field in fields if field in env_vars}
+        if found:
+            result[name] = found
+    return {"channels": result}
+
+
 @router.get("/{name}")
 def get_channel(
     name: str,
@@ -274,24 +310,6 @@ def delete_channel(
 
 
 # ── Env-based channel editing ─────────────────────────
-
-
-CHANNEL_ENV_FIELDS: dict[str, list[str]] = {
-    "feishu": [
-        "FEISHU_APP_ID",
-        "FEISHU_APP_SECRET",
-        "FEISHU_VERIFICATION_TOKEN",
-        "FEISHU_ENCRYPT_KEY",
-    ],
-    "weixin": [
-        "WEIXIN_ACCOUNT_ID",
-        "WEIXIN_TOKEN",
-        "WEIXIN_ENCODING_AES_KEY",
-    ],
-    "telegram": ["TELEGRAM_BOT_TOKEN"],
-    "discord": ["DISCORD_BOT_TOKEN"],
-    "slack": ["SLACK_BOT_TOKEN"],
-}
 
 
 @router.get("/{name}/env")

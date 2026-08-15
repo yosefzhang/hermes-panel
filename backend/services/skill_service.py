@@ -13,8 +13,14 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
-from .cli_utils import atomic_write_text, get_profile_cmd_prefix, get_profile_env
+from .cli_utils import TTLCache, atomic_write_text, get_profile_cmd_prefix, get_profile_env
 from .profile_service import ProfileService
+
+# CLI 结果按 profile 短时缓存：`hermes skills list` / `list-modified` 每次
+# 都要起子进程，是技能页加载慢的主要来源。写操作（新增/删除/启停/导入）
+# 会失效对应 profile 的缓存，其余场景下 30s 内重复访问直接命中内存。
+_SKILLS_CACHE_TTL = 30.0
+_skills_cache = TTLCache(_SKILLS_CACHE_TTL)
 
 SKILL_SOURCE_BUILTIN = "builtin"
 SKILL_SOURCE_HUB = "hub"
@@ -197,12 +203,20 @@ class SkillService:
             )
         return skills
 
-    def list_modified_names(self, profile: str | None = None) -> set[str]:
+    def list_modified_names(
+        self, profile: str | None = None, force_refresh: bool = False
+    ) -> set[str]:
         """Authoritative list of modified-but-original-bundled skills.
 
         `hermes skills list` shows modified skills as builtin, so we need
         the dedicated `list-modified` subcommand to distinguish them.
         """
+        cache_key = self._skills_cache_key("modified", profile)
+        if not force_refresh:
+            cached = _skills_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         cmd = get_profile_cmd_prefix(profile)
         if not cmd:
             return set()
@@ -231,14 +245,24 @@ class SkillService:
                 full_cmd, result.returncode, result.stderr[:500], result.stdout[:500],
             )
             return set()
-        return {
+        modified: set[str] = {
             stripped[2:].strip()
             for line in result.stdout.splitlines()
             if (stripped := line.strip()).startswith("~ ")
         }
+        _skills_cache.set(cache_key, modified)
+        return modified
 
-    def list_skills_cli(self, profile: str | None = None) -> list[dict]:
+    def list_skills_cli(
+        self, profile: str | None = None, force_refresh: bool = False
+    ) -> list[dict]:
         """Use the `hermes skills list` CLI as the source of truth when available."""
+        cache_key = self._skills_cache_key("cli", profile)
+        if not force_refresh:
+            cached = _skills_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         cmd = get_profile_cmd_prefix(profile)
         if not cmd:
             return []
@@ -267,9 +291,21 @@ class SkillService:
                 full_cmd, result.returncode, result.stderr[:500], result.stdout[:500],
             )
             return []
-        return _parse_skills_table(result.stdout)
+        skills = _parse_skills_table(result.stdout)
+        _skills_cache.set(cache_key, skills)
+        return skills
 
     # ── read / write / delete ──────────────────────────────
+
+    @staticmethod
+    def _skills_cache_key(kind: str, profile: str | None) -> str:
+        """Build the TTL cache key for a skill CLI result."""
+        return f"skills:{profile or 'default'}:{kind}"
+
+    @staticmethod
+    def _invalidate_skill_cache(profile: str | None) -> None:
+        """Drop cached CLI results for a profile after a mutation."""
+        _skills_cache.invalidate_prefix(f"skills:{profile or 'default'}:")
 
     def read_skill(self, profile: str | None, name: str) -> dict:
         path = self._find_skill(profile, name)
@@ -287,11 +323,13 @@ class SkillService:
         path = self._skill_path(profile, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, content)
+        self._invalidate_skill_cache(profile)
         return self.read_skill(profile, name)
 
     def delete_skill(self, profile: str | None, name: str) -> None:
         path = self._find_skill(profile, name)
         shutil.rmtree(path.parent)
+        self._invalidate_skill_cache(profile)
 
     def toggle_skill(self, profile: str | None, name: str, enabled: bool) -> dict:
         """Enable/disable by editing skills.disabled in config.yaml."""
@@ -306,6 +344,7 @@ class SkillService:
             disabled.append(name)
         skills_cfg["disabled"] = disabled
         self._dump_config(profile, config)
+        self._invalidate_skill_cache(profile)
         return {"name": name, "enabled": enabled}
 
     # ── external dirs ──────────────────────────────────────
@@ -332,6 +371,7 @@ class SkillService:
         path = self._skill_path(profile, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, content)
+        self._invalidate_skill_cache(profile)
         return self.read_skill(profile, name)
 
     # ── internals ──────────────────────────────────────────

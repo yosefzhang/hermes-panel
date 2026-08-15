@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -133,3 +134,44 @@ def atomic_write_text(path: Path, content: str) -> None:
         tmp.write(content)
         tmp_path = Path(tmp.name)
     os.replace(tmp_path, path)
+
+
+# ── Short-lived TTL cache ────────────────────────────────────────────────
+#
+# CLI-backed listing endpoints (skills / plugins) pay the cost of a hermes
+# subprocess on every request, which dominates page load time. A tiny
+# in-memory TTL cache avoids re-running those commands when a user navigates
+# between pages repeatedly. Callers invalidate the relevant key after any
+# mutation (enable/disable/import/delete) so edits show up immediately.
+
+
+class TTLCache:
+    """A minimal thread-safe TTL cache keyed by string.
+
+    Dict reads/writes are atomic under the GIL, so worst-case concurrent
+    access is a redundant subprocess call rather than corruption.
+    """
+
+    def __init__(self, ttl: float):
+        self._ttl = ttl
+        self._store: dict[str, tuple[float, Any]] = {}
+
+    def get(self, key: str) -> Any | None:
+        item = self._store.get(key)
+        if item is None:
+            return None
+        ts, value = item
+        if time.time() - ts > self._ttl:
+            self._store.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        self._store[key] = (time.time(), value)
+
+    def invalidate(self, key: str) -> None:
+        self._store.pop(key, None)
+
+    def invalidate_prefix(self, prefix: str) -> None:
+        for key in [k for k in self._store if k.startswith(prefix)]:
+            self._store.pop(key, None)

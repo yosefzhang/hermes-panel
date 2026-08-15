@@ -50,7 +50,7 @@ from backend.config import Settings, get_settings
 from backend.db.database import init_database
 from backend.services.host_info_service import HostInfoService
 from backend.services.profile_stats_service import ProfileStatsService
-from backend.services.sync_service import SyncService, get_receive_status, initialize_receive_state_from_settings, initialize_send_state_from_settings, set_receive_enabled, set_send_enabled
+from backend.services.sync_service import SyncService, ensure_receive_token, get_receive_status, initialize_receive_state_from_settings, initialize_send_state_from_settings, set_receive_enabled, set_send_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -141,6 +141,8 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
 
         # Restore receive-sync runtime state from persisted settings.
         initialize_receive_state_from_settings(app.state.settings)
+        # Ensure a receive token exists so senders always have one to use.
+        ensure_receive_token(app.state.settings)
 
         # Restore send-sync runtime state from persisted settings.
         initialize_send_state_from_settings(app.state.settings)
@@ -230,7 +232,6 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         system.audit_router,
         gateway.router,
         sync.router,
-        sync.webhook_router,
     ]
 
     for router in routers:

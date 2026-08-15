@@ -84,7 +84,7 @@ mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel
 | `sync.receive_enabled` | 是否接收其它面板推送的数据 | `false` |
 | `sync.target_url` | 数据同步目标面板地址 | - |
 | `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） | - |
-| `sync.receive_token` | 接收端 `/sync/` 与 `/webhook/sync` 校验的入站凭证 | - |
+| `sync.receive_token` | 接收端 `/sync/` 校验的入站凭证 | - |
 | `sync.token` | 兼容旧配置：单一共享 token；未分别配置 send/receive 时回退到此键 | - |
 | `sync.interval` | 默认 600 秒 |
 
@@ -197,11 +197,13 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 - Plugins 列表、启用、禁用、删除：[backend/api/plugins.py](backend/api/plugins.py)
 - 调用 Hermes CLI 时的 profile 前缀定位：[backend/services/cli_utils.py](backend/services/cli_utils.py)
 - 统一的子进程执行封装：[backend/services/cli_utils.py](backend/services/cli_utils.py)（所有 subprocess 调用均记录 cmd / rc / stdout/stderr 长度到日志）
+- 性能优化：`GET /skills` 与 `GET /plugins` 的 CLI 结果带 **30s profile 级内存缓存**（见 `cli_utils.TTLCache`），避免每次进入页面都同步执行 `hermes skills list` / `hermes plugins list --json`；写操作（启用/禁用/删除/新增）会自动使缓存失效；带 `?refresh=true` 可强制重跑 CLI 并刷新缓存
 
 ### 模型、渠道、Memory、SOUL
 
 - 模型配置与 provider 管理：[backend/api/models_config.py](backend/api/models_config.py)
 - 消息渠道配置（config + .env）：[backend/api/channels.py](backend/api/channels.py)
+- 渠道环境变量批量读取：`GET /channels/env` 一次返回所有 env 配置渠道的环境变量，避免前端逐渠道请求造成 N+1（单渠道 `GET/PUT /channels/{type}/env` 仍保留）
 - Memory 文件预览与编辑（MEMORY.md / USER.md）：[backend/api/memory.py](backend/api/memory.py)
 - 外置记忆体状态采集（hermes memory status）：[backend/services/profile_stats_service.py](backend/services/profile_stats_service.py) `_collect_memory_status()`
 - SOUL.md 查看与编辑：[backend/api/profile_files.py](backend/api/profile_files.py)（支持 SOUL.md / soul.md 大小写自动识别）
@@ -232,6 +234,13 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 - 操作审计写入与查询：[backend/api/system.py](backend/api/system.py)（`audit_router`，路由前缀 `/audit-logs`）
 - 审计日志服务：[backend/services/audit_log.py](backend/services/audit_log.py)
 
+## 性能优化（缓存）
+
+为减少页面加载与来回切换时的重复请求，实现了前后端两层短时缓存：
+
+1. **后端 CLI 结果缓存**：skills / plugins 等通过 `hermes` CLI 获取的列表，按 profile 缓存 30s，写操作自动失效，可用 `?refresh=true` 强制刷新。
+2. **前端 GET 短时缓存**：`frontend/src/api/client.ts` 对配置型接口（`/config`、`/channels`、`/models`、`/skills`、`/plugins`、`/system/versions`）做 15s 内存缓存，按 method + url + 参数命中；页面写操作后通过 `useApi.execute(true)` 走 `refresh: true` 绕过缓存强制刷新，避免"改完看不到变化"。模型页 Provider 区域复用父级 `/models` 数据，不再重复请求。
+
 ## 数据同步机制
 
 Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"的 profile 统计和主机信息汇总到一个"主面板"。
@@ -246,11 +255,11 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 | `sync.receive_enabled` | 本机是否接收其它面板推送的数据 |
 | `sync.target_url` | 接收数据的目标面板地址，例如 `http://192.168.1.10:8650` |
 | `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） |
-| `sync.receive_token` | 接收端 `/sync/` 与 `/webhook/sync` 校验的入站凭证 |
+| `sync.receive_token` | 接收端 `/sync/` 校验的入站凭证 |
 | `sync.token` | 兼容旧配置：单一共享 token；未分别配置 send/receive 时回退到此键 |
 | `sync.interval` | 默认 600 秒 |
 
-> 接收端 `POST /api/v1/sync/`（panel 间）与 `POST /api/v1/webhook/sync`（外部系统）均校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive_token` 一致。发送方向目标面板推送时使用 `sync.send_token` 作为出站凭证。
+> 接收端 `POST /api/v1/sync/`（panel 间与外部系统通用）校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive_token` 一致。发送方向目标面板推送时使用 `sync.send_token` 作为出站凭证。
 
 ### 数据流向
 
@@ -275,7 +284,7 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
   │
   │  外部系统（CI / 监控 Agent / 第三方工具）
   │                                   │
-  │                                   │ POST /api/v1/webhook/sync（Bearer receive_token）
+  │                                   │ POST /api/v1/sync/（Bearer receive_token）
   │                                   ▼
   │                        SyncService.ingest() ◄───┘
   │                                   │
@@ -299,11 +308,23 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
 
 ### 接收端处理
 
-目标面板收到 `POST /api/v1/sync/`（panel 间）或 `POST /api/v1/webhook/sync`（外部系统）后：
+目标面板收到 `POST /api/v1/sync/`（panel 间与外部系统通用）后：
 
 1. 校验请求头 `Authorization: Bearer <token>` 中的 token 与接收端 `sync.receive_token` 一致
 2. 检查 `sync.receive_enabled`，未启用则返回 400
 3. 调用 `SyncService.ingest()`：将 payload 中的 `hosts` 写入本地 `host_info` 表，`profiles` 写入本地 `profile_info` 表（按 `(host, username, ip, profile_name)` 区分，不会覆盖本机数据）
+
+#### 独立推送脚本
+
+项目提供 [`scripts/push_sync.py`](scripts/push_sync.py)：一个仅依赖 Python 标准库、可独立运行的推送脚本，其他机器把该脚本复制过去即可采集本机 Hermes 数据（host_info + 各 profile 的 token 用量）并推送到接收端点：
+
+```bash
+python3 push_sync.py --url http://<目标面板IP>:8650/api/v1/sync/ --token <接收Token>
+# 也可推送预先准备好的 JSON payload 文件（跳过本机采集）：
+python3 push_sync.py --url http://<目标面板IP>:8650/api/v1/sync/ --token <接收Token> --payload ./payload.json
+```
+
+`--url` 必填；`--token` 对应接收端配置的 `sync.receive_token`（未配置时面板会自动生成一个 16 位 token 并在前端显示）。更多参数见 `python3 push_sync.py --help`。
 
 相关代码：
 ````

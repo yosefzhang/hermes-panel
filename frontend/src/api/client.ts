@@ -1,21 +1,90 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 import type { LoginResponse, SectionsResponse, User } from '../types';
+
+// 扩展 Axios 配置：`refresh: true` 用于绕过前端 GET 缓存强制刷新
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    refresh?: boolean;
+  }
+}
 
 export const apiClient = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
 });
 
+// ── 前端短时 GET 缓存 ─────────────────────────────────────────────
+// 页面之间来回切换时，后端配置型接口会被反复读取。这里对部分 GET 接口
+// 做 15s 内存缓存；需要强制刷新时在请求配置里传 `refresh: true` 绕过。
+const GET_CACHE_TTL = 15000;
+const CACHEABLE_PREFIXES = ['/config', '/channels', '/models', '/skills', '/plugins', '/system/versions'];
+
+interface GetCacheItem {
+  ts: number;
+  value: unknown;
+}
+
+const getCache = new Map<string, GetCacheItem>();
+
+function isCacheable(url: string | undefined): boolean {
+  if (!url) return false;
+  return CACHEABLE_PREFIXES.some((prefix) => url.startsWith(prefix));
+}
+
+function sortParams(params: unknown): unknown {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return params;
+  const source = params as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) {
+    sorted[key] = source[key];
+  }
+  return sorted;
+}
+
+function buildCacheKey(config: AxiosRequestConfig): string {
+  return `${config.method || 'get'}|${config.url}|${JSON.stringify(sortParams(config.params))}`;
+}
+
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('hermes-panel-token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  const method = (config.method || 'get').toLowerCase();
+  if (method === 'get' && isCacheable(config.url)) {
+    const key = buildCacheKey(config);
+    (config as { _cacheKey?: string })._cacheKey = key;
+    // refresh: true 时跳过缓存读取（仍会写缓存），用于写操作后的强制刷新
+    if (!config.refresh) {
+      const hit = getCache.get(key);
+      if (hit && Date.now() - hit.ts < GET_CACHE_TTL) {
+        // 命中缓存：直接以缓存数据完成请求，不再发起真实网络请求
+        config.adapter = () =>
+          Promise.resolve({
+            data: hit.value,
+            status: 200,
+            statusText: 'OK',
+            headers: {},
+            config,
+            request: {},
+          });
+      }
+    }
+  }
   return config;
 });
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const key = (response.config as { _cacheKey?: string })._cacheKey;
+    const method = (response.config.method || 'get').toLowerCase();
+    if (key && method === 'get' && isCacheable(response.config.url)) {
+      getCache.set(key, { ts: Date.now(), value: response.data });
+    }
+    return response;
+  },
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('hermes-panel-token');
@@ -140,13 +209,10 @@ export const api = {
       last_hosts_count: number;
       total_payloads: number;
       receive_url: string;
-      webhook_url: string;
       receive_token: string | null;
       port: number;
       send: {
         enabled: boolean;
-        enabled_at: number | null;
-        uptime_seconds: number;
         last_push_at: number | null;
         last_push_ok: boolean | null;
         last_push_message: string | null;

@@ -10,11 +10,16 @@ from fastapi import APIRouter, Depends, Query
 
 from backend.auth.dependencies import ensure_profile_access, get_current_user
 from backend.db.models import User
-from backend.services.cli_utils import get_profile_cmd_prefix, get_profile_env
+from backend.services.cli_utils import TTLCache, get_profile_cmd_prefix, get_profile_env
 from backend.services.profile_service import ProfileService
 
 
 logger = logging.getLogger(__name__)
+
+# `hermes plugins list --json` 每次都要起子进程，是插件页加载慢的主要来源。
+# 按 profile 短时缓存解析后的插件列表；启停/删除等写操作会失效对应缓存。
+_PLUGINS_CACHE_TTL = 30.0
+_plugins_cache = TTLCache(_PLUGINS_CACHE_TTL)
 
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
@@ -154,10 +159,15 @@ def _run_plugin_cmd(profile: str, *args: str, timeout: int = 30) -> dict:
 @router.get("")
 def list_plugins(
     profile: str = Query("default"),
-    refresh: bool = Query(False, description="是否强制刷新 manifest 缓存"),
+    refresh: bool = Query(False, description="是否强制刷新 manifest 与插件列表缓存"),
     user: User = Depends(get_current_user),
 ):
     ensure_profile_access(user, profile)
+
+    if not refresh:
+        cached = _plugins_cache.get(profile)
+        if cached is not None:
+            return {"plugins": cached}
 
     cmd = get_profile_cmd_prefix(profile)
     if not cmd:
@@ -202,6 +212,7 @@ def list_plugins(
             plugin["category"] = map_to_top_category(raw_category, plugin["source"])
         else:
             plugin["category"] = "自定义"
+    _plugins_cache.set(profile, plugins)
     return {"plugins": plugins}
 
 
@@ -211,6 +222,7 @@ def enable_plugin(name: str, profile: str = Query("default"), user: User = Depen
     result = _run_plugin_cmd(profile, "enable", name)
     if not result["ok"]:
         return result
+    _plugins_cache.invalidate(profile)
     return {"ok": True}
 
 
@@ -220,6 +232,7 @@ def disable_plugin(name: str, profile: str = Query("default"), user: User = Depe
     result = _run_plugin_cmd(profile, "disable", name)
     if not result["ok"]:
         return result
+    _plugins_cache.invalidate(profile)
     return {"ok": True}
 
 
@@ -229,4 +242,5 @@ def delete_plugin(name: str, profile: str = Query("default"), user: User = Depen
     result = _run_plugin_cmd(profile, "remove", name)
     if not result["ok"]:
         return result
+    _plugins_cache.invalidate(profile)
     return {"ok": True}

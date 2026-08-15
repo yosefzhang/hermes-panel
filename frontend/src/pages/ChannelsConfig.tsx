@@ -58,29 +58,33 @@ export default function ChannelsConfig() {
   const [deleteTarget, setDeleteTarget] = useState<{ type: string; isEnv: boolean } | null>(null);
 
   const [envValues, setEnvValues] = useState<Record<string, Record<string, string>>>({});
-  const [envLoading, setEnvLoading] = useState<Record<string, boolean>>({});
 
   const fetchChannels = useCallback(
-    () => apiClient.get<ChannelsData>('/channels', { params: { profile: activeProfile } }).then((res) => res.data),
+    (force?: boolean) =>
+      apiClient
+        .get<ChannelsData>('/channels', {
+          params: { profile: activeProfile },
+          ...(force ? { refresh: true } : {}),
+        })
+        .then((res) => res.data),
     [activeProfile],
   );
 
   const { data: channels, loading, error, execute: reload } = useApi(fetchChannels, [activeProfile]);
 
+  // 一次性拉取所有 env 配置渠道的环境变量，避免逐渠道请求（N+1）
   useEffect(() => {
     if (!channels) return;
-    for (const [type, config] of Object.entries(channels)) {
-      if (config.configured_via === 'env' && ENV_FIELDS[type]) {
-        setEnvLoading((prev) => ({ ...prev, [type]: true }));
-        apiClient
-          .get<{ fields: Record<string, string> }>(`/channels/${type}/env`, { params: { profile: activeProfile } })
-          .then(({ data }) => {
-            setEnvValues((prev) => ({ ...prev, [type]: data.fields }));
-          })
-          .catch(() => {})
-          .finally(() => setEnvLoading((prev) => ({ ...prev, [type]: false })));
-      }
-    }
+    const envTypes = Object.keys(ENV_FIELDS).filter((t) => channels[t]?.configured_via === 'env');
+    if (envTypes.length === 0) return;
+    apiClient
+      .get<{ channels: Record<string, Record<string, string>> }>('/channels/env', {
+        params: { profile: activeProfile },
+      })
+      .then(({ data }) => {
+        setEnvValues(data.channels ?? {});
+      })
+      .catch(() => {});
   }, [channels, activeProfile]);
 
   const channelEntries = Object.entries(channels ?? {});
@@ -133,7 +137,7 @@ export default function ChannelsConfig() {
     try {
       await apiClient.delete(`/channels/${type}`, { params: { profile: activeProfile } });
       toast({ title: '成功', description: `已删除 ${type} 渠道配置` });
-      reload();
+      reload(true);
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '删除失败' });
     }
@@ -154,7 +158,7 @@ export default function ChannelsConfig() {
       await apiClient.put(`/channels/${editingChannel}`, cleanData, { params: { profile: activeProfile } });
       toast({ title: '成功', description: editingChannel ? `已更新 ${editingChannel} 渠道配置` : `已创建 ${editingChannel} 渠道配置` });
       setModalOpen(false);
-      reload();
+      reload(true);
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '保存失败' });
     } finally {
@@ -168,7 +172,7 @@ export default function ChannelsConfig() {
     try {
       await apiClient.put(`/channels/${type}/env`, values, { params: { profile: activeProfile } });
       toast({ title: '成功', description: `${type} 环境变量已保存` });
-      reload();
+      reload(true);
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '保存失败' });
     }
@@ -181,7 +185,7 @@ export default function ChannelsConfig() {
     try {
       await apiClient.put(`/channels/${type}/env`, payload, { params: { profile: activeProfile } });
       toast({ title: '成功', description: `${type} 环境变量已清除` });
-      reload();
+      reload(true);
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '删除失败' });
     }

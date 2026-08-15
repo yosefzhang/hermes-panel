@@ -37,15 +37,16 @@ def skill_service(request: Request) -> SkillService:
 @router.get("")
 def list_skills(
     profile: str = Query("default"),
+    refresh: bool = Query(False, description="是否强制重新执行 hermes skills CLI 并刷新缓存"),
     user: User = Depends(get_current_user),
     service: SkillService = Depends(skill_service),
 ):
     resolved = ensure_profile_access(user, profile)
-    cli_skills = service.list_skills_cli(resolved)
+    cli_skills = service.list_skills_cli(resolved, force_refresh=refresh)
     if cli_skills:
         # 合并本地扫描得到的 description/author + 权威 modified 集合
         local = {s["name"]: s for s in service.list_skills(resolved)}
-        modified_names = service.list_modified_names(resolved)
+        modified_names = service.list_modified_names(resolved, force_refresh=refresh)
         from ..services.skill_service import (
             _derive_origin,
             SKILL_SOURCE_MODIFIED,

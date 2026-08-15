@@ -180,7 +180,13 @@ export default function SkillsManager() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchSkills = useCallback(
-    () => apiClient.get<SkillsResponse>('/skills', { params: { profile: activeProfile } }).then((res) => res.data.skills),
+    (force?: boolean) =>
+      apiClient
+        .get<SkillsResponse>('/skills', {
+          params: { profile: activeProfile },
+          ...(force ? { refresh: true } : {}),
+        })
+        .then((res) => res.data.skills),
     [activeProfile],
   );
 
@@ -243,7 +249,7 @@ export default function SkillsManager() {
         title: '成功',
         description: enabled ? '已启用' : '已停用',
       });
-      reload();
+      reload(true);
     } catch {
       toast({
         variant: 'destructive',

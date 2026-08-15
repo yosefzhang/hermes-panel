@@ -61,17 +61,16 @@ component_versions:
 # Data sync to another hermes-panel instance.
 # When enabled, local host_info and profile_info tables are periodically
 # POSTed to the target panel's /api/v1/sync endpoint.
-# Inbound sync is accepted at:
-#   - /api/v1/sync/        (panel-to-panel, internal protocol)
-#   - /api/v1/webhook/sync (external systems / CI / monitoring agents)
+# Inbound sync is accepted at /api/v1/sync/ (panel-to-panel and external
+# systems / CI / monitoring agents alike).
 # Tokens are split so the outbound credential (send_token) and inbound
-# credential (receive_token) can differ. Both inbound endpoints verify
+# credential (receive_token) can differ. The inbound endpoint verifies
 # receive_token via Authorization: Bearer.
 sync:
   enabled: false
   receive_enabled: false
   # target_url: http://10.0.0.10:8660
   # send_token: presented to the target panel as Bearer on push
-  # receive_token: verified on /sync/ and /webhook/sync inbound
+  # receive_token: verified on /sync/ inbound
   # interval: 600
   # token: (legacy single shared token; kept for backwards compat, mapped to both)

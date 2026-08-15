@@ -10,11 +10,12 @@ interface UseApiReturn<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
-  execute: () => Promise<void>;
+  /** 重新请求；传 true 时请求方（fetcher）应绕过前端 GET 缓存强制刷新 */
+  execute: (force?: boolean) => Promise<void>;
 }
 
 export function useApi<T>(
-  fetcher: () => Promise<T>,
+  fetcher: (force?: boolean) => Promise<T>,
   deps: unknown[] = [],
   options: UseApiOptions<T> = {},
 ): UseApiReturn<T> {
@@ -26,12 +27,12 @@ export function useApi<T>(
   const depsRef = useRef(deps);
   depsRef.current = deps;
 
-  const execute = useCallback(async () => {
+  const execute = useCallback(async (force = false) => {
     if (!mountedRef.current) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await fetcher();
+      const result = await fetcher(force);
       if (!mountedRef.current) return;
       setData(result);
       onSuccess?.(result);

@@ -121,9 +121,11 @@ const AUX_LABELS: Record<string, string> = {
 function ProvidersTab({
   activeProfile,
   onReload,
+  modelsData,
 }: {
   activeProfile: string;
   onReload: () => void;
+  modelsData?: ModelsData | null;
 }) {
   const { toast } = useToast();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -164,38 +166,53 @@ function ProvidersTab({
   const [providerExpanded, setProviderExpanded] = useState<Record<string, boolean>>({});
   const [allModelsLoading, setAllModelsLoading] = useState(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [{ data: provData }, { data: modelsData }, { data: presetData }] = await Promise.all([
-        apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', { params: { profile: activeProfile } }),
-        apiClient.get<ModelsData>('/models', { params: { profile: activeProfile } }),
-        apiClient.get<{ presets: ProviderPreset[] }>('/models/provider-presets'),
-      ]);
-      setProviders(provData.providers ?? []);
-      setPresets(presetData.presets ?? []);
-      setCustomItems((modelsData.custom_providers ?? []).map((p) => ({
-        ...p,
-        name: p.name ?? '',
-        base_url: p.base_url ?? '',
-        key_env: p.key_env ?? '',
-        api_key: p.api_key ?? '',
-        api_mode: p.api_mode ?? '',
-        default_model: p.default_model ?? p.model ?? '',
-        model: p.model ?? '',
-        context_length: p.context_length ?? undefined,
-        rate_limit_delay: p.rate_limit_delay ?? undefined,
-      })));
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: '错误',
-        description: '加载失败',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [activeProfile, toast]);
+  const loadData = useCallback(
+    async (force = false) => {
+      setLoading(true);
+      try {
+        const [{ data: provData }, { data: presetData }] = await Promise.all([
+          apiClient.get<{ providers: ProviderInfo[] }>('/models/providers', {
+            params: { profile: activeProfile },
+            ...(force ? { refresh: true } : {}),
+          }),
+          apiClient.get<{ presets: ProviderPreset[] }>(
+            '/models/provider-presets',
+            force ? { refresh: true } : undefined,
+          ),
+        ]);
+        setProviders(provData.providers ?? []);
+        setPresets(presetData.presets ?? []);
+        // 复用父组件已获取的 /models 数据；未传入时才回退自行请求
+        const resolved =
+          modelsData ??
+          (await apiClient.get<ModelsData>('/models', {
+            params: { profile: activeProfile },
+            ...(force ? { refresh: true } : {}),
+          })).data;
+        setCustomItems((resolved.custom_providers ?? []).map((p) => ({
+          ...p,
+          name: p.name ?? '',
+          base_url: p.base_url ?? '',
+          key_env: p.key_env ?? '',
+          api_key: p.api_key ?? '',
+          api_mode: p.api_mode ?? '',
+          default_model: p.default_model ?? p.model ?? '',
+          model: p.model ?? '',
+          context_length: p.context_length ?? undefined,
+          rate_limit_delay: p.rate_limit_delay ?? undefined,
+        })));
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: '错误',
+          description: '加载失败',
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeProfile, modelsData, toast],
+  );
 
   useEffect(() => {
     loadData();
@@ -228,7 +245,7 @@ function ProvidersTab({
         title: '成功',
         description: '已保存',
       });
-      loadData();
+      loadData(true);
     } catch {
       toast({
         variant: 'destructive',
@@ -280,7 +297,7 @@ function ProvidersTab({
         title: '成功',
         description: `${row.name} 已删除`,
       });
-      await loadData();
+      await loadData(true);
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -365,7 +382,7 @@ function ProvidersTab({
       await apiClient.post('/models/providers', payload, { params: { profile: activeProfile } });
       toast({ title: '成功', description: '供应商已新增' });
       setCreateOpen(false);
-      loadData();
+      loadData(true);
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -2501,7 +2518,9 @@ export default function ModelsConfig() {
     [activeProfile],
   );
 
-  const { data, loading, error, execute: reload } = useApi(fetchModels, [activeProfile]);
+  const { data, loading, error, execute } = useApi(fetchModels, [activeProfile]);
+  // 写操作后强制绕过前端 GET 缓存刷新，其它 Tab 通过 onReload 复用同一刷新逻辑
+  const reload = useCallback(() => execute(true), [execute]);
 
   const handleSaveModel = async (values: any) => {
     await apiClient.put('/models/model', values, { params: { profile: activeProfile } });
@@ -2548,7 +2567,7 @@ export default function ModelsConfig() {
       </div>
 
       {activeTab === 'providers' && (
-        <ProvidersTab activeProfile={activeProfile} onReload={reload} />
+        <ProvidersTab activeProfile={activeProfile} onReload={reload} modelsData={data} />
       )}
       {activeTab === 'main' && (
         <MainModelTab

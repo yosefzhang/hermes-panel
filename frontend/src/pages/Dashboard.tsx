@@ -82,7 +82,7 @@ function useDashboardStats(data: DashboardData | null) {
 
     const profileRank = [...allProfiles]
       .sort((a, b) => b.total_tokens - a.total_tokens)
-      .slice(0, 10)
+      .slice(0, 5)
       .map((p) => ({
         name: p.profile_name,
         value: p.total_tokens,
@@ -473,7 +473,7 @@ export default function Dashboard() {
     <PageContainer>
       <PageHeader
         extra={
-          <Button variant="outline" size="sm" onClick={refresh}>
+          <Button variant="outline" size="sm" onClick={() => refresh()}>
             <RefreshCw className="mr-2 h-4 w-4" />
             刷新
           </Button>

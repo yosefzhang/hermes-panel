@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { api, apiClient } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useAuthStore } from '../store/authStore';
@@ -31,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Key, Trash2 } from 'lucide-react';
+import { Plus, Key, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import PageHeader from '../components/PageHeader';
 import Loading from '../components/Loading';
@@ -64,13 +65,10 @@ function SyncSettingsSection() {
     last_hosts_count: number;
     total_payloads: number;
     receive_url: string;
-    webhook_url: string;
     receive_token: string | null;
     port: number;
     send: {
       enabled: boolean;
-      enabled_at: number | null;
-      uptime_seconds: number;
       last_push_at: number | null;
       last_push_ok: boolean | null;
       last_push_message: string | null;
@@ -273,7 +271,6 @@ function SyncSettingsSection() {
                   <TableRow>
                     <TableHead className="whitespace-nowrap">推送端点</TableHead>
                     <TableHead className="whitespace-nowrap">同步间隔</TableHead>
-                    <TableHead className="whitespace-nowrap">运行时长</TableHead>
                     <TableHead className="whitespace-nowrap text-right">累计推送</TableHead>
                     <TableHead className="whitespace-nowrap text-right">成功</TableHead>
                     <TableHead className="whitespace-nowrap text-right">失败</TableHead>
@@ -289,9 +286,6 @@ function SyncSettingsSection() {
                       {targetUrl ? `${targetUrl}/api/v1/sync/` : '未配置'}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{interval} 秒</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {statusLoading ? '...' : formatUptime(runtimeStatus?.send?.uptime_seconds ?? 0)}
-                    </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       {statusLoading ? '...' : (runtimeStatus?.send?.total_pushes ?? 0)}
                     </TableCell>
@@ -352,7 +346,7 @@ function SyncSettingsSection() {
                 允许其他 hermes-panel 将数据同步到本机
               </p>
               <p className="text-xs text-muted-foreground">
-                同时支持外部系统通过 Webhook POST 推送数据
+                支持 panel 间与外部系统通过 POST 推送数据
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -378,6 +372,7 @@ function SyncSettingsSection() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="whitespace-nowrap">接收端点</TableHead>
+                    <TableHead className="whitespace-nowrap">接收 Token</TableHead>
                     <TableHead className="whitespace-nowrap">运行时长</TableHead>
                     <TableHead className="whitespace-nowrap text-right">累计接收</TableHead>
                     <TableHead className="whitespace-nowrap">最近接收时间</TableHead>
@@ -387,6 +382,9 @@ function SyncSettingsSection() {
                   <TableRow>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
                       {statusLoading ? '...' : (runtimeStatus?.receive_url || '—')}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[160px]">
+                      {statusLoading ? '...' : (receiveToken || '—')}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {statusLoading ? '...' : formatUptime(runtimeStatus?.uptime_seconds ?? 0)}
@@ -401,39 +399,101 @@ function SyncSettingsSection() {
                 </TableBody>
               </Table>
 
-              {/* 接收 Token —— 与 /sync/ 和 /webhook/sync 共用的入站凭证 */}
-              <div className="grid gap-2 rounded-md border bg-muted/40 px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">接收 Token</span>
-                  <span className="text-[10px] text-muted-foreground">发送方与 webhook 调用方需在 Authorization: Bearer 中提供</span>
-                </div>
-                <code className="font-mono text-xs text-foreground/80 break-all">
-                  {statusLoading ? '...' : (receiveToken || '（未配置，当前不校验）')}
-                </code>
-              </div>
-
-              {/* Webhook 端点 + 用法示例 */}
-              <div className="grid gap-2 rounded-md border bg-muted/40 px-3 py-2">
-                <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">Webhook 端点</span>
-                <code className="font-mono text-xs text-foreground/80 break-all">
-                  {statusLoading ? '...' : (runtimeStatus?.webhook_url || '—')}
-                </code>
-                <pre className="mt-1 overflow-x-auto rounded bg-muted px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-{`curl -X POST ${runtimeStatus?.webhook_url ?? '<WEBHOOK_URL>'} \\
-  -H "Authorization: Bearer ${receiveToken || '<RECEIVE_TOKEN>'}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "server_id": "host|user|ip",
-    "profiles": [{ "host": "...", "profile_name": "...", "session_count": 0, "total_tokens": 0, "total_input_tokens": 0, "total_output_tokens": 0, "cache_hit_rate": 0, "model_top5": [], "provider_top5": [], "daily_tokens": [] }],
-    "hosts": [{ "host": "...", "username": "...", "ip": "...", "hermes_version": "v1.0", "components": {} }],
-    "synced_at": 1700000000
-  }'`}
-                </pre>
-              </div>
+              {/* 用法示例 —— 可收起展开（与发送侧共用组件） */}
+              <SyncUsageExample url={runtimeStatus?.receive_url || ''} token={receiveToken} />
             </div>
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// 发送/接收数据同步共用的「用法示例」折叠卡片。
+// 发送与接收是对等协议：都是向目标 /api/v1/sync/ POST 同一结构的 body，
+// 区别仅在端点地址与 Bearer token（发送用 send_token，接收用 receive_token）。
+function SyncUsageExample({ url, token }: { url: string; token: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border bg-muted/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
+      >
+        <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">点击展开查看用法示例</span>
+        {open
+          ? <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+          : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />}
+      </button>
+      {open && (
+        <div className="markdown-body markdown-usage px-3 pb-3">
+          <ReactMarkdown>{`
+### 方式一：curl 直接推送
+
+\`\`\`bash
+curl -X POST ${url || '<ENDPOINT_URL>'} \\
+  -H "Authorization: Bearer ${token || '<TOKEN>'}" \\
+  -H "Content-Type: application/json" \\
+  -d @body.json
+\`\`\`
+
+### body.json 内容
+
+\`\`\`json
+{
+  "server_id": "host|user|ip",
+  "synced_at": 1700000000,
+  "hosts": [
+    {
+      "host": "hostname",
+      "username": "user",
+      "ip": "10.0.0.10",
+      "hermes_version": "v1.0.0",
+      "components": {
+        "hermes": "v1.0.0",
+        "node": "v20.0.0",
+        "npm": "10.0.0",
+        "git": "2.40.0"
+      }
+    }
+  ],
+  "profiles": [
+    {
+      "host": "hostname",
+      "username": "user",
+      "ip": "10.0.0.10",
+      "profile_name": "default",
+      "session_count": 12,
+      "total_tokens": 1024000,
+      "total_input_tokens": 512000,
+      "total_output_tokens": 512000,
+      "cache_hit_rate": 35.5,
+      "model_top5": [
+        { "model": "doubao-pro", "total_tokens": 800000, "sessions": 9 }
+      ],
+      "provider_top5": [
+        { "provider": "volc", "total_tokens": 1024000, "sessions": 12 }
+      ],
+      "daily_tokens": [
+        { "day": "2026-08-15", "total_tokens": 1024000, "input_tokens": 512000, "output_tokens": 512000 }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+### 方式二：push_sync.py 独立脚本
+
+\`\`\`bash
+python3 push_sync.py --url ${url || '<ENDPOINT_URL>'} \\
+  --token ${token || '<TOKEN>'}
+\`\`\`
+
+仅依赖 Python 标准库，复制到安装了 hermes 的机器即可运行；也可用 \`--payload\` 推送预置 JSON。
+`}</ReactMarkdown>
+        </div>
+      )}
     </div>
   );
 }
