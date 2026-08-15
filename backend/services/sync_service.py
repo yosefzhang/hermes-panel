@@ -134,8 +134,8 @@ class SyncService:
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.settings.sync_token:
-            headers["Authorization"] = f"Bearer {self.settings.sync_token}"
+        if self.settings.sync_send_token:
+            headers["Authorization"] = f"Bearer {self.settings.sync_send_token}"
         return headers
 
     def push(self) -> dict:
@@ -218,25 +218,59 @@ class SyncService:
         }
 
     def ingest(self, payload: dict) -> dict:
-        """Store an incoming sync payload into the local database."""
+        """Store an incoming sync payload into the local database.
+
+        The payload carries two independent collections:
+          - ``hosts``:  host-level metadata → written to the host_info table
+          - ``profiles``: profile-level statistics → written to profile_info
+        Previously both were crammed into a single ``profiles`` row; the split
+        schema keeps them in their own tables and lets host info refresh on the
+        1 h cadence while profile stats refresh on the 10 min cadence.
+        """
         if not self.settings.sync_receive_enabled:
             raise ValueError("sync receive is disabled on this panel")
         profiles = payload.get("profiles", [])
         hosts = payload.get("hosts", [])
 
-        stats_service = ProfileStatsService(self.settings)
-
-        def _find_host(host: str | None, username: str | None, ip: str | None) -> dict | None:
-            for h in hosts:
-                if (
-                    h.get("host") == host
-                    and h.get("username") == username
-                    and h.get("ip") == ip
-                ):
-                    return h
-            return None
-
         with connect(self.db_path) as conn:
+            # --- host_info: one row per (host, username, ip) ---
+            for h in hosts:
+                host = h.get("host")
+                username = h.get("username")
+                ip = h.get("ip")
+                if username is None or ip is None:
+                    server_id = h.get("server_id", "")
+                    parts = server_id.split("|")
+                    if host is None and len(parts) > 0:
+                        host = parts[0]
+                    if username is None and len(parts) > 1:
+                        username = parts[1]
+                    if ip is None and len(parts) > 2:
+                        ip = parts[2]
+                components = dict(
+                    h.get("components") or h.get("system_versions") or {}
+                )
+                components.pop("hermes", None)
+                conn.execute(
+                    """
+                    INSERT INTO host_info (host, username, ip, hermes_version, components, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(host, username, ip) DO UPDATE SET
+                        hermes_version=excluded.hermes_version,
+                        components=excluded.components,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        host,
+                        username,
+                        ip,
+                        h.get("hermes_version"),
+                        json.dumps(components),
+                        h.get("updated_at", time.time()),
+                    ),
+                )
+
+            # --- profile_info: one row per (host, username, ip, profile_name) ---
             for p in profiles:
                 host = p.get("host")
                 username = p.get("username")
@@ -251,7 +285,6 @@ class SyncService:
                     if ip is None and len(parts) > 2:
                         ip = parts[2]
 
-                hinfo = _find_host(host, username, ip) or {}
                 ProfileStatsService.upsert(
                     conn,
                     host=host,
@@ -275,27 +308,6 @@ class SyncService:
                     memory_endpoint=p.get("memory_endpoint"),
                     memory_agent=p.get("memory_agent"),
                     updated_at=p.get("updated_at", time.time()),
-                )
-                # Update host metadata columns on the same row.
-                components = dict(hinfo.get("components", {}) or hinfo.get("system_versions", {}) or {})
-                components.pop("hermes", None)
-                conn.execute(
-                    """
-                    UPDATE profiles
-                    SET hermes_version = ?,
-                        components = ?,
-                        updated_at = ?
-                    WHERE host = ? AND username = ? AND ip = ? AND profile_name = ?
-                    """,
-                    (
-                        hinfo.get("hermes_version"),
-                        json.dumps(components),
-                        p.get("updated_at", time.time()),
-                        host,
-                        username,
-                        ip,
-                        p.get("profile_name", ""),
-                    ),
                 )
 
         _receive_state["last_received_at"] = time.time()

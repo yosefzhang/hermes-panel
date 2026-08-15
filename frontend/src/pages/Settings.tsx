@@ -46,7 +46,8 @@ function SyncSettingsSection() {
   const [receiveRuntimeEnabled, setReceiveRuntimeEnabled] = useState(false);
   const [targetHost, setTargetHost] = useState('');
   const [targetPort, setTargetPort] = useState('8650');
-  const [token, setToken] = useState('');
+  const [sendToken, setSendToken] = useState('');
+  const [receiveToken, setReceiveToken] = useState('');
   const [interval, setInterval] = useState(60);
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -63,6 +64,8 @@ function SyncSettingsSection() {
     last_hosts_count: number;
     total_payloads: number;
     receive_url: string;
+    webhook_url: string;
+    receive_token: string | null;
     port: number;
     send: {
       enabled: boolean;
@@ -91,6 +94,10 @@ function SyncSettingsSection() {
       const status = await api.syncStatus();
       setRuntimeStatus(status);
       setReceiveRuntimeEnabled(status.enabled);
+      // keep the receive-token field in sync with the authoritative runtime value
+      if (status.receive_token !== undefined && status.receive_token !== null) {
+        setReceiveToken(status.receive_token);
+      }
     } catch {
       setRuntimeStatus(null);
       // 如果运行时状态接口失败，回退到当前配置状态，避免显示不一致
@@ -107,7 +114,8 @@ function SyncSettingsSection() {
       const parsed = parseTargetUrl(data.target_url || '');
       setTargetHost(parsed.host);
       setTargetPort(parsed.port);
-      setToken(data.token || '');
+      setSendToken(data.send_token || '');
+      setReceiveToken(data.receive_token || '');
       setInterval(data.interval);
       setSendStatus('idle');
       setSendStatusText('未验证');
@@ -122,14 +130,16 @@ function SyncSettingsSection() {
     receiveEnabled?: boolean;
     targetHost?: string;
     targetPort?: string;
-    token?: string;
+    sendToken?: string;
+    receiveToken?: string;
     interval?: number;
   }) => {
     const nextEnabled = updates.enabled ?? enabled;
     const nextReceiveEnabled = updates.receiveEnabled ?? receiveEnabled;
     const nextHost = updates.targetHost ?? targetHost;
     const nextPort = updates.targetPort ?? targetPort;
-    const nextToken = updates.token ?? token;
+    const nextSendToken = updates.sendToken ?? sendToken;
+    const nextReceiveToken = updates.receiveToken ?? receiveToken;
     const nextInterval = updates.interval ?? interval;
     const nextTargetUrl = buildTargetUrl(nextHost, nextPort);
 
@@ -139,14 +149,16 @@ function SyncSettingsSection() {
         enabled: nextEnabled,
         receive_enabled: nextReceiveEnabled,
         target_url: nextTargetUrl || null,
-        token: nextToken || null,
+        send_token: nextSendToken || null,
+        receive_token: nextReceiveToken || null,
         interval: nextInterval,
       });
       setEnabled(nextEnabled);
       setReceiveEnabled(nextReceiveEnabled);
       setTargetHost(nextHost);
       setTargetPort(nextPort);
-      setToken(nextToken);
+      setSendToken(nextSendToken);
+      if (nextReceiveToken !== undefined) setReceiveToken(nextReceiveToken);
       setInterval(nextInterval);
       setSendOpen(false);
       toast({ title: '成功', description: '同步配置已保存' });
@@ -166,7 +178,7 @@ function SyncSettingsSection() {
     }
     setVerifying(true);
     try {
-      await api.verifySyncTarget(targetUrl, token);
+      await api.verifySyncTarget(targetUrl, sendToken);
       setSendStatus('ok');
       setSendStatusText('连接正常');
       toast({ title: '验证成功', description: '目标面板可正常连接' });
@@ -312,7 +324,7 @@ function SyncSettingsSection() {
               <SendSyncDialogForm
                 initialHost={targetHost}
                 initialPort={targetPort}
-                initialToken={token}
+                initialToken={sendToken}
                 initialInterval={interval}
                 onSave={handleSave}
                 saving={saving}
@@ -338,6 +350,9 @@ function SyncSettingsSection() {
               </div>
               <p className="text-sm text-muted-foreground">
                 允许其他 hermes-panel 将数据同步到本机
+              </p>
+              <p className="text-xs text-muted-foreground">
+                同时支持外部系统通过 Webhook POST 推送数据
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -385,6 +400,36 @@ function SyncSettingsSection() {
                   </TableRow>
                 </TableBody>
               </Table>
+
+              {/* 接收 Token —— 与 /sync/ 和 /webhook/sync 共用的入站凭证 */}
+              <div className="grid gap-2 rounded-md border bg-muted/40 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">接收 Token</span>
+                  <span className="text-[10px] text-muted-foreground">发送方与 webhook 调用方需在 Authorization: Bearer 中提供</span>
+                </div>
+                <code className="font-mono text-xs text-foreground/80 break-all">
+                  {statusLoading ? '...' : (receiveToken || '（未配置，当前不校验）')}
+                </code>
+              </div>
+
+              {/* Webhook 端点 + 用法示例 */}
+              <div className="grid gap-2 rounded-md border bg-muted/40 px-3 py-2">
+                <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">Webhook 端点</span>
+                <code className="font-mono text-xs text-foreground/80 break-all">
+                  {statusLoading ? '...' : (runtimeStatus?.webhook_url || '—')}
+                </code>
+                <pre className="mt-1 overflow-x-auto rounded bg-muted px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+{`curl -X POST ${runtimeStatus?.webhook_url ?? '<WEBHOOK_URL>'} \\
+  -H "Authorization: Bearer ${receiveToken || '<RECEIVE_TOKEN>'}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "server_id": "host|user|ip",
+    "profiles": [{ "host": "...", "profile_name": "...", "session_count": 0, "total_tokens": 0, "total_input_tokens": 0, "total_output_tokens": 0, "cache_hit_rate": 0, "model_top5": [], "provider_top5": [], "daily_tokens": [] }],
+    "hosts": [{ "host": "...", "username": "...", "ip": "...", "hermes_version": "v1.0", "components": {} }],
+    "synced_at": 1700000000
+  }'`}
+                </pre>
+              </div>
             </div>
           )}
         </CardContent>
@@ -446,11 +491,11 @@ function SendSyncDialogForm({
         </div>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="sync-token">同步 Token（发送与接收共用）</Label>
+        <Label htmlFor="sync-token">发送 Token（提交给目标面板）</Label>
         <Input
           id="sync-token"
           type="password"
-          placeholder="与目标面板配置的 SYNC_TOKEN 一致"
+          placeholder="与目标面板的接收 Token 一致"
           value={token}
           onChange={(e) => setToken(e.target.value)}
         />

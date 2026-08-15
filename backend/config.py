@@ -118,12 +118,17 @@ class Settings(BaseModel):
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8650"]
 
     # Data sync to another hermes-panel instance.
-    # When enabled, local profiles (profile stats + host metadata) are periodically
+    # When enabled, local host_info and profile_info tables are periodically
     # POSTed to the configured target panel.
+    # Inbound sync is accepted at /api/v1/sync/ (panel-to-panel) and
+    # /api/v1/webhook/sync (external systems); both verify the receive token.
     sync_enabled: bool = False
     sync_receive_enabled: bool = False
     sync_target_url: str | None = None
-    sync_token: str | None = None
+    # send / receive tokens are separate keys, but fall back to the legacy
+    # shared "token" key so existing config.yaml files keep working.
+    sync_send_token: str | None = None
+    sync_receive_token: str | None = None
     sync_interval: int = 600
 
     # Components whose versions are queried via CLI for the dashboard.
@@ -174,7 +179,10 @@ def _build_settings_from_file(data: dict) -> Settings:
         sync_enabled=bool(sync.get("enabled", False)),
         sync_receive_enabled=bool(sync.get("receive_enabled", False)),
         sync_target_url=sync.get("target_url"),
-        sync_token=sync.get("token"),
+        # send / receive tokens are separate keys, but fall back to the legacy
+        # shared "token" key so existing config.yaml files keep working.
+        sync_send_token=sync.get("send_token", sync.get("token")),
+        sync_receive_token=sync.get("receive_token", sync.get("token")),
         sync_interval=int(sync.get("interval", 600)),
         component_versions=data.get("component_versions") or list(_DEFAULT_COMPONENT_VERSIONS),
     )

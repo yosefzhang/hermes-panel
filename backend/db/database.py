@@ -57,7 +57,29 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 """
 
 PROFILES_SCHEMA = """
-CREATE TABLE IF NOT EXISTS profiles (
+-- host_info: host-level metadata (hermes version, system component versions).
+-- Refreshed once per hour by the full refresh cycle. One row per
+-- (host, username, ip) so host metadata is no longer denormalised
+-- across every profile row.
+CREATE TABLE IF NOT EXISTS host_info (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT,
+    username TEXT,
+    ip TEXT,
+    hermes_version TEXT,
+    components TEXT NOT NULL DEFAULT '{}',
+    updated_at REAL NOT NULL,
+    UNIQUE(host, username, ip)
+);
+CREATE INDEX IF NOT EXISTS idx_host_info_lookup ON host_info(host, username, ip);
+CREATE INDEX IF NOT EXISTS idx_host_info_updated ON host_info(updated_at);
+
+-- profile_info: per-profile statistics (tokens, sessions, gateway status,
+-- model/provider breakdowns, daily tokens, config version, memory status).
+-- Fast-refreshed every 10 minutes (gateway + token totals) and fully
+-- refreshed every 1 hour. Host-level columns are intentionally absent;
+-- join to host_info on (host, username, ip) to recover them.
+CREATE TABLE IF NOT EXISTS profile_info (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     host TEXT,
     username TEXT,
@@ -73,8 +95,6 @@ CREATE TABLE IF NOT EXISTS profiles (
     model_top5 TEXT NOT NULL DEFAULT '[]',
     provider_top5 TEXT NOT NULL DEFAULT '[]',
     daily_tokens TEXT NOT NULL DEFAULT '[]',
-    hermes_version TEXT,
-    components TEXT NOT NULL DEFAULT '{}',
     current_config_version INTEGER,
     latest_config_version INTEGER,
     memory_available INTEGER,
@@ -84,8 +104,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     updated_at REAL NOT NULL,
     UNIQUE(host, username, ip, profile_name)
 );
-CREATE INDEX IF NOT EXISTS idx_profiles_host_user_ip ON profiles(host, username, ip);
-CREATE INDEX IF NOT EXISTS idx_profiles_updated ON profiles(updated_at);
+CREATE INDEX IF NOT EXISTS idx_profile_info_host_user_ip ON profile_info(host, username, ip);
+CREATE INDEX IF NOT EXISTS idx_profile_info_updated ON profile_info(updated_at);
 """
 
 
@@ -117,8 +137,16 @@ def _components_without_hermes(system_versions: dict | None) -> str:
     return json.dumps(data)
 
 
-def _migrate_legacy_to_new_profiles(connection: sqlite3.Connection) -> None:
-    """Merge legacy profile_stats + host_info into the unified profiles table."""
+def _migrate_legacy_to_split_tables(connection: sqlite3.Connection) -> None:
+    """Merge legacy profile_stats + host_info into the new host_info/profile_info.
+
+    Legacy schema had:
+      - profile_stats: per-profile tokens/sessions (no host columns on older rows)
+      - host_info: host-level hermes_version + system_versions
+
+    New schema splits these into host_info (host-level) and profile_info
+    (profile-level). This helper migrates the *oldest* legacy form.
+    """
     if not _table_exists(connection, "profile_stats"):
         return
 
@@ -134,28 +162,59 @@ def _migrate_legacy_to_new_profiles(connection: sqlite3.Connection) -> None:
                 return h
         return None
 
+    # Copy host-level rows into host_info_new.
+    for h in host_info_rows:
+        system_versions = {}
+        if h["system_versions"]:
+            try:
+                system_versions = json.loads(h["system_versions"])
+            except Exception:
+                system_versions = {}
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO host_info_new (
+                host, username, ip, hermes_version, components, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                h["host"],
+                h["username"],
+                h["ip"],
+                h["hermes_version"],
+                _components_without_hermes(system_versions),
+                h["updated_at"],
+            ),
+        )
+
+    # Copy profile-level rows into profile_info_new, looking up host metadata
+    # only to ensure the (host, username, ip) tuple exists in host_info_new.
     for row in connection.execute("SELECT * FROM profile_stats").fetchall():
         server_id = row["server_id"] or ""
         parts = server_id.split("|")
         host = parts[0] if len(parts) > 0 else row["host"]
         username = parts[1] if len(parts) > 1 else None
         ip = parts[2] if len(parts) > 2 else None
+
         hinfo = _find_host_info(host, username, ip)
-        system_versions = {}
-        if hinfo and hinfo["system_versions"]:
-            try:
-                system_versions = json.loads(hinfo["system_versions"])
-            except Exception:
-                system_versions = {}
+        if hinfo is not None:
+            # Ensure the host row is present even if the legacy host_info
+            # table was missing this server (profile_stats carried server_id).
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO host_info_new (
+                    host, username, ip, hermes_version, components, updated_at
+                ) VALUES (?, ?, ?, ?, '{}', ?)
+                """,
+                (host, username, ip, hinfo["hermes_version"], row["updated_at"]),
+            )
 
         connection.execute(
             """
-            INSERT OR IGNORE INTO profiles_new (
+            INSERT OR IGNORE INTO profile_info_new (
                 host, username, ip, profile_name, path, gateway_status, session_count,
                 total_tokens, total_input_tokens, total_output_tokens, cache_hit_rate,
-                model_top5, provider_top5, daily_tokens, hermes_version, components,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                model_top5, provider_top5, daily_tokens, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 host,
@@ -172,8 +231,6 @@ def _migrate_legacy_to_new_profiles(connection: sqlite3.Connection) -> None:
                 row["model_top5"],
                 row["provider_top5"],
                 row["daily_tokens"],
-                hinfo["hermes_version"] if hinfo else None,
-                _components_without_hermes(system_versions),
                 row["updated_at"],
             ),
         )
@@ -182,88 +239,78 @@ def _migrate_legacy_to_new_profiles(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE IF EXISTS host_info")
 
 
-def _migrate_old_profiles(connection: sqlite3.Connection) -> None:
-    """Migrate an existing profiles table from the hermes_home/system_versions schema."""
-    has_hermes_home = _column_exists(connection, "profiles", "hermes_home")
-    has_system_versions = _column_exists(connection, "profiles", "system_versions")
+def _migrate_old_unified_profiles(connection: sqlite3.Connection) -> None:
+    """Split an existing unified *profiles* table into host_info + profile_info.
 
-    # The table already matches the current schema shape (no legacy columns).
-    # Copy existing rows straight into profiles_new so the DROP+RENAME swap
-    # below doesn't wipe live data. New columns absent from the old table
-    # (e.g. current_config_version) default to NULL and are filled by the
-    # next stats collection cycle.
-    if not has_hermes_home and not has_system_versions:
-        old_cols = {r[1] for r in connection.execute("PRAGMA table_info(profiles)")}
-        new_cols = {r[1] for r in connection.execute("PRAGMA table_info(profiles_new)")}
-        shared = [c for c in old_cols & new_cols if c != "id"]
-        if shared:
-            cols = ", ".join(shared)
-            connection.execute(
-                f"INSERT OR IGNORE INTO profiles_new ({cols}) SELECT {cols} FROM profiles"
-            )
+    Handles both:
+      - the recent unified schema (hermes_version + components already present)
+      - older schema with hermes_home / system_versions columns
+    """
+    if not _table_exists(connection, "profiles"):
         return
 
-    columns = [
-        "id",
-        "host",
-        "username",
-        "ip",
-        "profile_name",
-        "path",
-        "gateway_status",
-        "session_count",
-        "total_tokens",
-        "total_input_tokens",
-        "total_output_tokens",
-        "cache_hit_rate",
-        "model_top5",
-        "provider_top5",
-        "daily_tokens",
-        "hermes_version",
-        "updated_at",
-    ]
-    if has_hermes_home:
-        columns.append("hermes_home")
-    if has_system_versions:
-        columns.append("system_versions")
+    has_hermes_home = _column_exists(connection, "profiles", "hermes_home")
+    has_system_versions = _column_exists(connection, "profiles", "system_versions")
+    old_cols = {r[1] for r in connection.execute("PRAGMA table_info(profiles)")}
 
-    select_sql = f"SELECT {', '.join(columns)} FROM profiles"
-    for row in connection.execute(select_sql).fetchall():
-        system_versions = {}
+    # ---- host-level rows (one per host,username,ip) ----
+    host_has_hermes_version = "hermes_version" in old_cols
+    host_select = "SELECT host, username, ip"
+    if host_has_hermes_version:
+        host_select += ", hermes_version"
+    if has_system_versions:
+        host_select += ", system_versions"
+    if "components" in old_cols:
+        host_select += ", components"
+    host_select += ", MAX(updated_at) AS updated_at FROM profiles GROUP BY host, username, ip"
+
+    for row in connection.execute(host_select).fetchall():
+        components = {}
         if has_system_versions and row["system_versions"]:
             try:
-                system_versions = json.loads(row["system_versions"])
+                components = json.loads(row["system_versions"])
             except Exception:
-                system_versions = {}
-
+                components = {}
+        elif "components" in old_cols and row["components"]:
+            try:
+                components = json.loads(row["components"])
+            except Exception:
+                components = {}
         connection.execute(
             """
-            INSERT OR REPLACE INTO profiles_new (
-                host, username, ip, profile_name, path, gateway_status, session_count,
-                total_tokens, total_input_tokens, total_output_tokens, cache_hit_rate,
-                model_top5, provider_top5, daily_tokens, hermes_version, components,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO host_info_new (
+                host, username, ip, hermes_version, components, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 row["host"],
                 row["username"],
                 row["ip"],
-                row["profile_name"],
-                row["path"],
-                row["gateway_status"],
-                row["session_count"],
-                row["total_tokens"],
-                row["total_input_tokens"],
-                row["total_output_tokens"],
-                row["cache_hit_rate"],
-                row["model_top5"],
-                row["provider_top5"],
-                row["daily_tokens"],
-                row["hermes_version"],
-                _components_without_hermes(system_versions),
+                row["hermes_version"] if host_has_hermes_version else None,
+                _components_without_hermes(components),
                 row["updated_at"],
             ),
+        )
+
+    # ---- profile-level rows ----
+    profile_cols = {
+        "id", "host", "username", "ip", "profile_name", "path", "gateway_status",
+        "session_count", "total_tokens", "total_input_tokens", "total_output_tokens",
+        "cache_hit_rate", "model_top5", "provider_top5", "daily_tokens",
+        "current_config_version", "latest_config_version",
+        "memory_available", "memory_provider", "memory_endpoint", "memory_agent",
+        "updated_at",
+    }
+    if has_hermes_home:
+        profile_cols.discard("hermes_home")
+    if has_system_versions:
+        profile_cols.discard("system_versions")
+    profile_cols.discard("hermes_version")
+    profile_shared = [c for c in old_cols & profile_cols if c != "id"]
+    if profile_shared:
+        cols = ", ".join(profile_shared)
+        connection.executescript(
+            f"INSERT OR IGNORE INTO profile_info_new ({cols}) SELECT {cols} FROM profiles"
         )
 
 
@@ -272,22 +319,82 @@ def init_database(settings: Settings) -> None:
     with connect(settings.hermes_panel_db_path) as connection:
         connection.executescript(CONTROL_SCHEMA)
 
-        # SQLite makes it awkward to drop/rename columns, so we build the new
-        # profiles table under a temporary name and swap it in.
-        temp_schema = PROFILES_SCHEMA.replace("profiles", "profiles_new").replace(
-            "idx_profiles_host_user_ip", "idx_profiles_host_user_ip_new"
-        ).replace("idx_profiles_updated", "idx_profiles_updated_new")
-        connection.executescript(temp_schema)
+        # Build the new split tables (host_info + profile_info) under temporary
+        # names, migrate data in, then swap them into place. PROFILES_SCHEMA
+        # contains both table definitions; we use it for idempotent CREATE
+        # after the swap (below) and hand-write the *_new temp schemas here
+        # so the legacy host_info table can still be read during migration.
+        host_only_schema = """
+        CREATE TABLE IF NOT EXISTS host_info_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host TEXT,
+            username TEXT,
+            ip TEXT,
+            hermes_version TEXT,
+            components TEXT NOT NULL DEFAULT '{}',
+            updated_at REAL NOT NULL,
+            UNIQUE(host, username, ip)
+        );
+        CREATE INDEX IF NOT EXISTS idx_host_info_lookup_new ON host_info_new(host, username, ip);
+        CREATE INDEX IF NOT EXISTS idx_host_info_updated_new ON host_info_new(updated_at);
+        """
+        profile_only_schema = """
+        CREATE TABLE IF NOT EXISTS profile_info_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host TEXT,
+            username TEXT,
+            ip TEXT,
+            profile_name TEXT NOT NULL,
+            path TEXT,
+            gateway_status TEXT,
+            session_count INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            total_input_tokens INTEGER NOT NULL DEFAULT 0,
+            total_output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_hit_rate REAL NOT NULL DEFAULT 0.0,
+            model_top5 TEXT NOT NULL DEFAULT '[]',
+            provider_top5 TEXT NOT NULL DEFAULT '[]',
+            daily_tokens TEXT NOT NULL DEFAULT '[]',
+            current_config_version INTEGER,
+            latest_config_version INTEGER,
+            memory_available INTEGER,
+            memory_provider TEXT,
+            memory_endpoint TEXT,
+            memory_agent TEXT,
+            updated_at REAL NOT NULL,
+            UNIQUE(host, username, ip, profile_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_info_host_user_ip_new ON profile_info_new(host, username, ip);
+        CREATE INDEX IF NOT EXISTS idx_profile_info_updated_new ON profile_info_new(updated_at);
+        """
+        connection.executescript(host_only_schema)
+        connection.executescript(profile_only_schema)
 
-        _migrate_legacy_to_new_profiles(connection)
-        _migrate_old_profiles(connection)
+        _migrate_legacy_to_split_tables(connection)
+        _migrate_old_unified_profiles(connection)
 
+        # Drop the legacy unified profiles table; the new split tables take over.
         connection.execute("DROP TABLE IF EXISTS profiles")
-        connection.execute("ALTER TABLE profiles_new RENAME TO profiles")
-        connection.execute("DROP INDEX IF EXISTS idx_profiles_host_user_ip_new")
-        connection.execute("DROP INDEX IF EXISTS idx_profiles_updated_new")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_profiles_host_user_ip ON profiles(host, username, ip)")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_profiles_updated ON profiles(updated_at)")
+        # Swap temp tables into their final names.
+        connection.execute("DROP TABLE IF EXISTS host_info")
+        connection.execute("ALTER TABLE host_info_new RENAME TO host_info")
+        connection.execute("DROP INDEX IF EXISTS idx_host_info_lookup_new")
+        connection.execute("DROP INDEX IF EXISTS idx_host_info_updated_new")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_host_info_lookup ON host_info(host, username, ip)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_host_info_updated ON host_info(updated_at)")
+
+        connection.execute("DROP TABLE IF EXISTS profile_info")
+        connection.execute("ALTER TABLE profile_info_new RENAME TO profile_info")
+        connection.execute("DROP INDEX IF EXISTS idx_profile_info_host_user_ip_new")
+        connection.execute("DROP INDEX IF EXISTS idx_profile_info_updated_new")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_profile_info_host_user_ip ON profile_info(host, username, ip)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_profile_info_updated ON profile_info(updated_at)")
+
+        # Final idempotent pass: PROFILES_SCHEMA uses CREATE IF NOT EXISTS,
+        # so this is a no-op when the swap above already created the tables
+        # (fresh or migrated), and it guarantees the tables exist for code
+        # paths that skip migration (e.g. tests with their own settings).
+        connection.executescript(PROFILES_SCHEMA)
 
         existing = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if existing == 0:

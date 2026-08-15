@@ -7,6 +7,8 @@ under the sender's host, username and IP combination.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -16,14 +18,22 @@ from backend.config import Settings, get_settings, update_config_file
 from backend.db.models import User
 from backend.services.sync_service import SyncService, get_receive_status, get_send_status, set_receive_enabled, set_send_enabled
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+# Separate router for inbound webhook sync. Mounted at /webhook so it is
+# distinct from the panel-to-panel /sync endpoint while reusing the same
+# sync_receive_enabled toggle and shared sync_token for authentication.
+webhook_router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
 class SyncSettingsOut(BaseModel):
     enabled: bool
     receive_enabled: bool
     target_url: str | None
-    token: str | None
+    send_token: str | None
+    receive_token: str | None
     interval: int
 
 
@@ -31,7 +41,8 @@ class SyncSettingsIn(BaseModel):
     enabled: bool
     receive_enabled: bool
     target_url: str | None = Field(default=None)
-    token: str | None = Field(default=None)
+    send_token: str | None = Field(default=None)
+    receive_token: str | None = Field(default=None)
     interval: int = Field(default=60, ge=10)
 
 
@@ -41,14 +52,15 @@ class VerifyTargetIn(BaseModel):
 
 
 @router.get("/settings", response_model=SyncSettingsOut)
-async def get_sync_settings(user: User = Depends(require_admin)):
+async def get_sync_settings(request: Request, user: User = Depends(require_admin)):
     """Return the current data sync configuration."""
-    settings = get_settings()
+    settings: Settings = request.app.state.settings
     return SyncSettingsOut(
         enabled=settings.sync_enabled,
         receive_enabled=settings.sync_receive_enabled,
         target_url=settings.sync_target_url,
-        token=settings.sync_token,
+        send_token=settings.sync_send_token,
+        receive_token=settings.sync_receive_token,
         interval=settings.sync_interval,
     )
 
@@ -66,7 +78,8 @@ async def update_sync_settings(
             "enabled": body.enabled,
             "receive_enabled": body.receive_enabled,
             "target_url": body.target_url,
-            "token": body.token,
+            "send_token": body.send_token,
+            "receive_token": body.receive_token,
             "interval": body.interval,
         }
     })
@@ -78,7 +91,8 @@ async def update_sync_settings(
     app_settings.sync_enabled = body.enabled
     app_settings.sync_receive_enabled = body.receive_enabled
     app_settings.sync_target_url = body.target_url
-    app_settings.sync_token = body.token
+    app_settings.sync_send_token = body.send_token
+    app_settings.sync_receive_token = body.receive_token
     app_settings.sync_interval = body.interval
 
     return {"ok": True}
@@ -90,15 +104,19 @@ async def get_sync_status(
     user: User = Depends(require_admin),
 ):
     """Return runtime sync status, including receive-sync process state."""
-    settings = get_settings()
+    settings: Settings = request.app.state.settings
     status = get_receive_status()
     status["send"] = get_send_status()
-    # Derive the local receive endpoint URL from the request so the UI can
+    # Derive the local receive endpoint URLs from the request so the UI can
     # show senders where to POST.
     scheme = request.url.scheme
     host = request.headers.get("host", f"{settings.host}:{settings.port}")
     status["receive_url"] = f"{scheme}://{host}/api/v1/sync/"
+    status["webhook_url"] = f"{scheme}://{host}/api/v1/webhook/sync"
     status["port"] = settings.port
+    # Surface the currently configured receive token so the receiving-side UI
+    # can display it next to the webhook usage instructions.
+    status["receive_token"] = settings.sync_receive_token
     return status
 
 
@@ -106,19 +124,19 @@ async def get_sync_status(
 async def receive_sync(request: Request, payload: dict):
     """Receive profile_stats and host_info from another hermes-panel.
 
-    Authentication: the sender provides the shared sync token via the
+    Authentication: the sender provides the inbound receive token via the
     ``Authorization: Bearer <token>`` header.  This is a machine-to-machine
-    endpoint, so we verify the sync token directly rather than requiring a
+    endpoint, so we verify the receive token directly rather than requiring a
     JWT (which only the panel's own UI users possess).
     """
-    settings = get_settings()
+    settings: Settings = request.app.state.settings
     if not settings.sync_receive_enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="接收同步未启用",
         )
-    # Verify the shared sync token.
-    expected_token = settings.sync_token
+    # Verify the inbound receive token (shared by /sync/ and /webhook/sync).
+    expected_token = settings.sync_receive_token
     if expected_token:
         auth_header = request.headers.get("Authorization", "")
         received_token = ""
@@ -139,11 +157,12 @@ async def receive_sync(request: Request, payload: dict):
 
 @router.post("/verify")
 async def verify_target(
+    request: Request,
     body: VerifyTargetIn,
     user: User = Depends(require_admin),
 ):
     """Verify that a target panel is reachable and returns a valid health response."""
-    settings = get_settings()
+    settings: Settings = request.app.state.settings
     service = SyncService(settings)
     result = service.verify_target(body.target_url, body.token)
     if not result.get("ok"):
@@ -172,4 +191,76 @@ async def trigger_push(request: Request, user: User = Depends(require_admin)):
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=result.get("message", "推送失败"),
         )
+    return result
+
+
+@webhook_router.post("/sync")
+async def receive_webhook_sync(request: Request):
+    """Inbound webhook endpoint for external systems to push sync payloads.
+
+    Accepts the same JSON payload shape as POST /api/v1/sync/ (a dict with
+    optional ``profiles`` and ``hosts`` arrays) so an external CI runner,
+    monitoring agent, or third-party tool can POST data directly without
+    speaking the panel-to-panel protocol.
+
+    Authentication reuses the shared sync token via the
+    ``Authorization: Bearer <token>`` header and requires
+    ``sync_receive_enabled`` to be turned on (same gate as /sync/).
+
+    The body is read as raw bytes and JSON-parsed manually so that callers
+    that omit ``Content-Type: application/json`` or send pre-compact JSON
+    still work, and so we can return a clear 400 instead of FastAPI's 422.
+    """
+    # Use the app-level settings instance so runtime toggles (e.g. enabling
+    # receive via the UI) take effect immediately, rather than rebuilding a
+    # fresh Settings from disk on every request.
+    settings: Settings = request.app.state.settings
+    if not settings.sync_receive_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="接收同步未启用",
+        )
+    # Verify the inbound receive token (shared by /sync/ and /webhook/sync).
+    expected_token = settings.sync_receive_token
+    if expected_token:
+        auth_header = request.headers.get("Authorization", "")
+        received_token = ""
+        if auth_header.startswith("Bearer "):
+            received_token = auth_header[7:]
+        if received_token != expected_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的同步凭证",
+            )
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请求体为空",
+        )
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请求体不是合法的 JSON",
+        )
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请求体必须是 JSON 对象",
+        )
+
+    service = SyncService(settings)
+    try:
+        result = service.ingest(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    logger.info(
+        "Webhook sync received: source=%s profiles=%d hosts=%d",
+        request.headers.get("user-agent", "-"),
+        len(payload.get("profiles", [])),
+        len(payload.get("hosts", [])),
+    )
     return result

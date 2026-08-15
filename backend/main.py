@@ -54,12 +54,15 @@ from backend.services.sync_service import SyncService, get_receive_status, initi
 
 
 logger = logging.getLogger(__name__)
-# Local profile stats and host metadata both target the unified `profiles`
-# table for the same (host, username, ip, profile_name) rows, so they are
-# refreshed together in a single loop to keep the two in sync within the
-# same timestamp cycle.
-_FAST_REFRESH_INTERVAL = 600   # 10 minutes: gateway status + token totals
-_FULL_REFRESH_INTERVAL = 3600  # 1 hour: all fields including memory status, config version, etc.
+# Profile stats and host metadata are now stored in separate tables, so they
+# refresh on independent cadences:
+#   - profile_info: fast (gateway + token totals) every 10 min, full (all
+#     fields) every 1 h — both owned by ProfileStatsService.
+#   - host_info: host-level metadata (hermes version, components) every 1 h
+#     only — owned by HostInfoService. The fast cycle no longer touches the
+#     host_info table.
+_FAST_REFRESH_INTERVAL = 600   # 10 min: profile_info gateway status + token totals
+_FULL_REFRESH_INTERVAL = 3600  # 1 h: profile_info full + host_info metadata
 
 # A typical uvicorn dev session already configures its own handlers; avoid
 # touching logging when we detect a non-empty child logger config (e.g.
@@ -142,9 +145,10 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         # Restore send-sync runtime state from persisted settings.
         initialize_send_state_from_settings(app.state.settings)
 
-        # Start local data collection (profile stats + host metadata) in a
-        # single background loop, since both write to the same `profiles`
-        # table.
+        # Start local data collection. Profile stats and host metadata now
+        # live in separate tables (profile_info / host_info) refreshed on
+        # independent cadences, but still share one background loop so the
+        # two stay timestamp-coherent within the full cycle.
         stats_service = ProfileStatsService(app.state.settings)
         host_info_service = HostInfoService(app.state.settings)
         local_data_task = asyncio.create_task(
@@ -226,6 +230,7 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         system.audit_router,
         gateway.router,
         sync.router,
+        sync.webhook_router,
     ]
 
     for router in routers:
@@ -253,12 +258,15 @@ async def _refresh_local_data(
 ) -> None:
     """Background loop with two cadences:
 
-    - Every 10 min: fast stats (gateway status + token totals) + host info
-    - Every 1 hour: full stats (all fields: memory status, config version,
-      model/provider breakdowns, daily tokens) + host info
+    - Every 10 min: fast profile stats (gateway status + token totals) only.
+      The host_info table is intentionally *not* refreshed on the fast cycle;
+      its data (hermes version, component versions) changes slowly.
+    - Every 1 hour: full profile stats (memory status, config version,
+      model/provider breakdowns, daily tokens) + host info refresh.
 
-    Host metadata (hermes_version, components) is refreshed alongside the
-    fast cycle so the dashboard reflects version changes reasonably quickly.
+    Host metadata is refreshed alongside the full cycle so the dashboard
+    reflects version changes reasonably quickly without hammering the CLI
+    sub-processes every 10 minutes.
     """
     logger.info(
         "Local data refresh loop starting (fast=%ds, full=%ds)",
@@ -287,7 +295,6 @@ async def _refresh_local_data(
             else:
                 logger.info("Local data refresh cycle (fast) start")
                 await asyncio.to_thread(stats_service.collect_fast_stats)
-                await asyncio.to_thread(host_info_service.refresh_local)
                 logger.info("Local data refresh cycle (fast) done")
         except asyncio.CancelledError:
             logger.info("Local data refresh loop cancelled")

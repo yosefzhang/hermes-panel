@@ -102,7 +102,8 @@ export const api = {
       enabled: boolean;
       receive_enabled: boolean;
       target_url: string | null;
-      token: string | null;
+      send_token: string | null;
+      receive_token: string | null;
       interval: number;
     }>('/sync/settings');
     return data;
@@ -111,7 +112,8 @@ export const api = {
     enabled: boolean;
     receive_enabled?: boolean;
     target_url?: string | null;
-    token?: string | null;
+    send_token?: string | null;
+    receive_token?: string | null;
     interval?: number;
   }) => {
     const { data } = await apiClient.put<{ ok: boolean }>('/sync/settings', settings);
@@ -138,6 +140,8 @@ export const api = {
       last_hosts_count: number;
       total_payloads: number;
       receive_url: string;
+      webhook_url: string;
+      receive_token: string | null;
       port: number;
       send: {
         enabled: boolean;

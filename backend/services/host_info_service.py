@@ -104,59 +104,54 @@ class HostInfoService:
         )
 
     def _upsert(self, conn, info: HostInfo) -> None:
-        # The unified ``profiles`` table stores host-level metadata
-        # (hermes_version, components) on every profile row keyed by
-        # (host, username, ip). ProfileStatsService owns the INSERT; this
-        # method only UPDATEs the host columns so the two services stay in
-        # sync under the same timestamp.
+        # host_info is now a standalone table (one row per host, username, ip).
+        # We own the INSERT here — ProfileStatsService no longer touches host
+        # columns. INSERT ... ON CONFLICT keeps the row when it already exists
+        # and only refreshes hermes_version, components, updated_at.
         components = dict(info.components) if info.components else {}
         components.pop("hermes", None)
         return conn.execute(
             """
-            UPDATE profiles
-            SET hermes_version = ?,
-                components = ?,
-                updated_at = ?
-            WHERE host = ? AND username = ? AND ip = ?
+            INSERT INTO host_info (host, username, ip, hermes_version, components, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(host, username, ip) DO UPDATE SET
+                hermes_version=excluded.hermes_version,
+                components=excluded.components,
+                updated_at=excluded.updated_at
             """,
             (
-                info.hermes_version,
-                json.dumps(components),
-                info.updated_at,
                 info.host,
                 info.username,
                 info.ip,
+                info.hermes_version,
+                json.dumps(components),
+                info.updated_at,
             ),
         )
 
     def refresh_local(self) -> HostInfo:
-        """Collect and store local host info in the panel DB."""
+        """Collect and store local host info in the panel DB (host_info table)."""
         info = self.collect_local_host_info()
-        updated_rows = 0
         with connect(self.db_path) as conn:
             cur = self._upsert(conn, info)
-            # sqlite3 Cursor.rowcount = number of rows matched by the UPDATE
-            updated_rows = getattr(cur, 'rowcount', 0) if cur else 0
         logger.info(
             "host_info refresh_local: upserted host=%s user=%s ip=%s "
-            "hermes_version=%s components=%d matched_rows=%d",
+            "hermes_version=%s components=%d",
             info.host, info.username, info.ip,
             info.hermes_version,
             len({k: v for k, v in (info.components or {}).items() if k != 'hermes'}),
-            updated_rows,
         )
         return info
 
     def get_all_host_info(self) -> list[HostInfo]:
         """Return host info for all known servers (local + children).
 
-        Multiple profile rows share the same host+username+ip; collapse
-        them to one HostInfo per server.
+        With the split schema, host_info is its own table; one row per
+        server already, no GROUP BY collapse needed.
         """
         with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT host, username, ip, hermes_version, components, updated_at "
-                "FROM profiles GROUP BY host, username, ip "
-                "ORDER BY MAX(updated_at) DESC"
+                "FROM host_info ORDER BY updated_at DESC"
             ).fetchall()
         return [HostInfo.from_row(row) for row in rows]

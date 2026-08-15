@@ -30,15 +30,14 @@ logger = logging.getLogger(__name__)
 _DAILY_DAYS = 15
 _TOP_N = 5
 
-# Fields in the profiles table that are stored as JSON strings.
-_JSON_FIELDS = {"model_top5", "provider_top5", "daily_tokens", "components"}
+# Fields in the profile_info table that are stored as JSON strings.
+_JSON_FIELDS = {"model_top5", "provider_top5", "daily_tokens"}
 
 # Default values for JSON fields when parsing fails.
 _JSON_DEFAULTS = {
     "model_top5": [],
     "provider_top5": [],
     "daily_tokens": [],
-    "components": {},
 }
 
 
@@ -320,13 +319,13 @@ class ProfileStatsService:
         with connect(self.db_path) as conn:
             if accessible_profiles is None:
                 rows = conn.execute(
-                    "SELECT * FROM profiles ORDER BY host, username, ip, profile_name"
+                    "SELECT * FROM profile_info ORDER BY host, username, ip, profile_name"
                 ).fetchall()
             else:
                 placeholders = ",".join("?" * len(accessible_profiles))
                 rows = conn.execute(
                     f"""
-                    SELECT * FROM profiles
+                    SELECT * FROM profile_info
                     WHERE profile_name IN ({placeholders})
                     ORDER BY host, username, ip, profile_name
                     """,
@@ -335,21 +334,45 @@ class ProfileStatsService:
         return [_row_to_profile(row) for row in rows]
 
     def get_aggregated(self, accessible_profiles: list[str] | None = None) -> dict:
-        """Return stats grouped by server (host + username + ip)."""
+        """Return stats grouped by server (host + username + ip).
+
+        Host-level metadata (hermes_version, components) now lives in the
+        separate host_info table; we fetch it once and graft it onto the
+        server group keyed by the same (host, username, ip) tuple.
+        """
         stats = self.get_all_stats(accessible_profiles)
         servers: dict[str, dict] = {}
         local_server_id = make_server_id(socket.gethostname(), get_username(), get_primary_ip())
 
+        # Pull host-level metadata from host_info (one row per server).
+        host_meta: dict[str, dict] = {}
+        with connect(self.db_path) as conn:
+            host_rows = conn.execute(
+                "SELECT host, username, ip, hermes_version, components, updated_at "
+                "FROM host_info"
+            ).fetchall()
+        for h in host_rows:
+            sid = make_server_id(h["host"] or "", h["username"] or "", h["ip"] or "")
+            try:
+                components = json.loads(h["components"] or "{}")
+            except Exception:
+                components = {}
+            host_meta[sid] = {
+                "hermes_version": h["hermes_version"],
+                "components": components,
+            }
+
         for s in stats:
             if s.server_id not in servers:
+                meta = host_meta.get(s.server_id, {})
                 servers[s.server_id] = {
                     "id": s.server_id,
                     "name": s.host or s.server_id,
                     "host": s.host,
                     "username": s.username,
                     "ip": s.ip,
-                    "hermes_version": s.hermes_version,
-                    "components": s.components,
+                    "hermes_version": meta.get("hermes_version"),
+                    "components": meta.get("components", {}),
                     "is_local": s.server_id == local_server_id,
                     "online": True,
                     "profiles": [],
@@ -396,7 +419,7 @@ class ProfileStatsService:
     ) -> None:
         conn.execute(
             """
-            INSERT INTO profiles (
+            INSERT INTO profile_info (
                 host, username, ip, profile_name, path, gateway_status, session_count,
                 total_tokens, total_input_tokens, total_output_tokens, cache_hit_rate,
                 model_top5, provider_top5, daily_tokens, current_config_version,
@@ -470,7 +493,7 @@ class ProfileStatsService:
         """
         conn.execute(
             """
-            INSERT INTO profiles (
+            INSERT INTO profile_info (
                 host, username, ip, profile_name,
                 gateway_status, session_count, total_tokens,
                 total_input_tokens, total_output_tokens, cache_hit_rate,
@@ -518,8 +541,6 @@ def _row_to_profile(row) -> Profile:
         model_top5=_load_json_field(row, "model_top5"),
         provider_top5=_load_json_field(row, "provider_top5"),
         daily_tokens=_load_json_field(row, "daily_tokens"),
-        hermes_version=row["hermes_version"],
-        components=_load_json_field(row, "components"),
         current_config_version=row["current_config_version"],
         latest_config_version=row["latest_config_version"],
         memory_available=row["memory_available"],

@@ -21,8 +21,6 @@ class Profile:
     model_top5: list[dict]
     provider_top5: list[dict]
     daily_tokens: list[dict]
-    hermes_version: str | None
-    components: dict
     current_config_version: int | None
     latest_config_version: int | None
     memory_available: bool | None
@@ -53,8 +51,6 @@ class Profile:
             "model_top5": self.model_top5,
             "provider_top5": self.provider_top5,
             "daily_tokens": self.daily_tokens,
-            "hermes_version": self.hermes_version,
-            "components": self.components,
             "current_config_version": self.current_config_version,
             "latest_config_version": self.latest_config_version,
             "memory_available": self.memory_available,

@@ -83,8 +83,10 @@ mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel
 | `sync.enabled` | 是否向目标面板推送数据 | `false` |
 | `sync.receive_enabled` | 是否接收其它面板推送的数据 | `false` |
 | `sync.target_url` | 数据同步目标面板地址 | - |
-| `sync.token` | 数据同步鉴权 token（仅发送端用作 `Authorization: Bearer` 请求头） | - |
-| `sync.interval` | 数据同步推送间隔（秒） | `600` |
+| `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） | - |
+| `sync.receive_token` | 接收端 `/sync/` 与 `/webhook/sync` 校验的入站凭证 | - |
+| `sync.token` | 兼容旧配置：单一共享 token；未分别配置 send/receive 时回退到此键 | - |
+| `sync.interval` | 默认 600 秒 |
 
 ### 环境变量覆盖
 
@@ -122,9 +124,28 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 | `system_metrics` | 系统资源历史 | `timestamp`, `cpu_percent`, `memory_percent`, `memory_used_gb`, `memory_total_gb`, `disk_percent`, `net_bytes_sent`, `net_bytes_recv`, `load_avg_1m` |
 | `audit_logs` | 操作审计日志 | `timestamp`, `actor`, `action`, `target_type`, `target_id`, `details`, `success`, `ip_address` |
 
-### 2. Profiles 表（profiles）
+### 2. 数据表（host_info + profile_info）
 
-`host_info` 与 `profile_stats` 已合并为一张表，每一行代表**某个主机上的某个 profile**，同时携带该主机的元数据（Hermes 版本、系统版本等）。这是多主机汇总与数据同步的核心表。
+主机级元数据与 profile 级统计分别存储在两张表中，各按不同的频率刷新，避免主机信息在每个 profile 行上反规范化复制。
+
+#### host_info 表
+
+每一行代表**一台主机**，由 `(host, username, ip)` 唯一标识。默认 **1 小时**刷新一次。
+
+| 字段 | 说明 | 更新频率 |
+|------|------|----------|
+| `host` | 主机名 | - |
+| `username` | 用户名 | - |
+| `ip` | IP 地址 | - |
+| `hermes_version` | Hermes CLI 版本 | 1h |
+| `components` | 除 Hermes 外的各组件版本信息，JSON | 1h |
+| `updated_at` | 更新时间戳 | 每次采集 |
+
+唯一约束：`UNIQUE(host, username, ip)`。
+
+#### profile_info 表
+
+每一行代表**某个主机上的某个 profile**，包含 gateway 状态、token 统计、模型/provider 分布等。快速周期 **10 分钟**刷新一次，完整周期 **1 小时**刷新一次。
 
 | 字段 | 说明 | 更新频率 |
 |------|------|----------|
@@ -142,8 +163,6 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 | `model_top5` | token 用量 Top5 模型，JSON 数组 | 1h |
 | `provider_top5` | token 用量 Top5 provider，JSON 数组 | 1h |
 | `daily_tokens` | 最近 15 天每日 token 用量，JSON 数组 | 1h |
-| `hermes_version` | Hermes CLI 版本（独立列） | 10min（随 host info） |
-| `components` | 除 Hermes 外的各组件版本信息，JSON | 10min（随 host info） |
 | `current_config_version` | 当前 profile 配置版本 | 1h |
 | `latest_config_version` | 最新可用配置版本 | 1h |
 | `memory_available` | 外置记忆体是否可用 | 1h |
@@ -154,7 +173,7 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 
 唯一约束：`UNIQUE(host, username, ip, profile_name)`。
 
-主机元数据以**反规范化**方式存储在每个 profile 行上；查询所有主机时，按 `(host, username, ip)` 分组即可。
+视图层（`ProfileStatsService.get_aggregated`）在聚合时会按 `(host, username, ip)` 将 `host_info` 的主机元数据 join 回每个 server 的摘要中，前端无需感知拆表。
 
 ## 功能模块与对应代码
 
@@ -226,215 +245,69 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 | `sync.enabled` | 本机是否定时把本地数据推送到目标面板 |
 | `sync.receive_enabled` | 本机是否接收其它面板推送的数据 |
 | `sync.target_url` | 接收数据的目标面板地址，例如 `http://192.168.1.10:8650` |
-| `sync.token` | 发送端把它作为 `Authorization: Bearer` 请求头发给目标面板 |
+| `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） |
+| `sync.receive_token` | 接收端 `/sync/` 与 `/webhook/sync` 校验的入站凭证 |
+| `sync.token` | 兼容旧配置：单一共享 token；未分别配置 send/receive 时回退到此键 |
 | `sync.interval` | 默认 600 秒 |
 
-> 接收端 `POST /api/v1/sync/` 校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.token` 一致。
+> 接收端 `POST /api/v1/sync/`（panel 间）与 `POST /api/v1/webhook/sync`（外部系统）均校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive_token` 一致。发送方向目标面板推送时使用 `sync.send_token` 作为出站凭证。
 
 ### 数据流向
 
 ```
-子面板                          主面板
-  │                               │
-  ├─ collect_fast_stats()  10min ─┐  (gateway + token)
-  ├─ collect_local_stats()  1h   ─┤  (全量 + memory status)
-  ├─ host_info.refresh_local()   ─┤  (hermes version + components)
-  │                               │             │
-  │                               │  定时 SYNC_INTERVAL  │
-  │                               ▼             │
-  │                    SyncService.push()       │
-  │                               │             │
-  │                               │ POST /api/v1/sync/（sync token）
-  │                               │             │
-  │                               ▼             │
-  │                    SyncService.ingest() ◄───┘
-  │                               │
-  │                               ▼
-  │                    profiles 表
+子面板                              主面板
+  │                                   │
+  ├─ collect_fast_stats()  10min ──┐   (gateway + token, 写 profile_info)
+  ├─ collect_local_stats()  1h   ──┤   (全量 + memory, 写 profile_info)
+  ├─ host_info.refresh_local() 1h ─┤   (hermes version + components, 写 host_info)
+  │                                   │             │
+  │                                   │  定时 SYNC_INTERVAL  │
+  │                                   ▼             │
+  │                        SyncService.push()       │
+  │                                   │             │
+  │                                   │ POST /api/v1/sync/（Bearer send_token）
+  │                                   │             │
+  │                                   ▼             │
+  │                        SyncService.ingest() ◄───┘
+  │                                   │
+  │                                   ▼
+  │                        host_info + profile_info 表
   │
-  ▼
-本地 profiles 表
+  │  外部系统（CI / 监控 Agent / 第三方工具）
+  │                                   │
+  │                                   │ POST /api/v1/webhook/sync（Bearer receive_token）
+  │                                   ▼
+  │                        SyncService.ingest() ◄───┘
+  │                                   │
+  ▼                                   ▼
+本地 host_info + profile_info 表
 ```
 
 ### 后台任务
 
 FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main.py)）：
 
-1. `_refresh_local_data`：双频率采集循环，将本地 Hermes profiles 统计写入统一的 `profiles` 表：
-   - **快速周期（10 分钟）**：仅采集 gateway 状态、token 总量（session_count、total_tokens、input/output_tokens、cache_hit_rate），调用 `collect_fast_stats()` + `host_info_service.refresh_local()`
-   - **完整周期（1 小时）**：采集全部字段（含 model/provider top5、daily_tokens、config version、memory status），调用 `collect_local_stats()` + `host_info_service.refresh_local()`
+1. `_refresh_local_data`：双频率采集循环，将本地 Hermes 数据写入拆分的两张表：
+   - **快速周期（10 分钟）**：仅采集 gateway 状态、token 总量（session_count、total_tokens、input/output_tokens、cache_hit_rate），调用 `collect_fast_stats()` 写入 `profile_info` 表
+   - **完整周期（1 小时）**：采集全部字段（含 model/provider top5、daily_tokens、config version、memory status），调用 `collect_local_stats()` 写入 `profile_info` 表；同时调用 `host_info_service.refresh_local()` 写入 `host_info` 表（主机元数据仅在完整周期刷新）
    - 启动时先执行一次完整采集，确保首次渲染有完整数据
    - 两个周期共用 `_collect_lock` 防止并发写入导致 `database is locked`
    - SQLite 使用 WAL 模式 + busy_timeout=10s 防止读写锁冲突
-2. `_run_sync_loop`：若 `sync.enabled=true` 且配置了 `sync.target_url`，则每 `sync.interval` 秒把本地数据 POST 到目标面板
+2. `_run_sync_loop`：若 `sync.enabled=true` 且配置了 `sync.target_url`，则每 `sync.interval` 秒把本地 `host_info` + `profile_info` 数据 POST 到目标面板
 
-> 前端"刷新"按钮（`POST /api/v1/profiles/aggregated/refresh`）会触发一次完整采集，不受后台定时周期限制。
+> 前端"刷新"按钮（`POST /api/v1/profiles/aggregated/refresh`）会触发一次完整采集（含 host_info 刷新），不受后台定时周期限制。
 
 ### 接收端处理
 
-目标面板收到 `POST /api/v1/sync/` 后：
+目标面板收到 `POST /api/v1/sync/`（panel 间）或 `POST /api/v1/webhook/sync`（外部系统）后：
 
-1. 校验请求头 `Authorization: Bearer <token>` 中的 token 与接收端 `sync.token` 一致
+1. 校验请求头 `Authorization: Bearer <token>` 中的 token 与接收端 `sync.receive_token` 一致
 2. 检查 `sync.receive_enabled`，未启用则返回 400
-3. 调用 `SyncService.ingest()` 把 payload 中的 `profiles` 写入本地统一的 `profiles` 表，主机元数据随每个 profile 行一起更新
-4. 数据按发送方的 `(host, username, ip, profile_name)` 区分，不会覆盖本机数据
+3. 调用 `SyncService.ingest()`：将 payload 中的 `hosts` 写入本地 `host_info` 表，`profiles` 写入本地 `profile_info` 表（按 `(host, username, ip, profile_name)` 区分，不会覆盖本机数据）
 
 相关代码：
-
-- 同步 API：[backend/api/sync.py](backend/api/sync.py)
-- 同步业务逻辑：[backend/services/sync_service.py](backend/services/sync_service.py)
-- 设置页前端：[frontend/src/pages/Settings.tsx](frontend/src/pages/Settings.tsx)
-
-### 前端展示
-
-`profiles` 表中的数据会按 `(host, username, ip)`（即 `server_id`）分组，在左侧导航以"主机 → Profile → 配置分类"的树形展示，并在 Dashboard 汇总多主机数据。详情见：
-
-- 聚合接口：[backend/api/profile_stats.py](backend/api/profile_stats.py) (`/profiles/aggregated`、`/profiles/aggregated/hosts`)
-- 侧边栏：[frontend/src/components/AppLayout.tsx](frontend/src/components/AppLayout.tsx)
-
-## API 概览
-
-所有接口挂载在 `/api/v1` 前缀下。除登录、`/system/health` 健康检查和 `/system/ws/system` WebSocket 实时推送外，均需 `Authorization: Bearer <token>`；admin 专属接口还需 admin 角色。
-
-| 前缀 | 说明 |
-|------|------|
-| `/auth` | 登录、当前用户、登出 |
-| `/users` | 用户增删改查、改密码（admin） |
-| `/config` | config.yaml section / 原始 YAML 读写 |
-| `/profile-files` | profile 下 config / .env / SOUL / USER / MEMORY 文件读写（.env 掩码，SOUL.md 支持大小写） |
-| `/profiles` | profile 列表与详情 |
-| `/profiles/aggregated` | profile 统计聚合（含多主机），`/refresh` 触发全量采集，`/hosts` 主机信息 |
-| `/skills` | skills 列表、读写、启用禁用、导入、external-dirs |
-| `/plugins` | 插件列表、启用、禁用、删除 |
-| `/models` | 模型 section、providers、预设、连通性测试 |
-| `/channels` | 渠道配置（config + .env） |
-| `/memory` | MEMORY.md / USER.md 文件预览与编辑 |
-| `/tokens` | token 用量聚合、趋势、仪表盘 |
-| `/system` | 系统指标、历史、版本、Hermes 更新（admin），`/ws/system` 实时推送，`/health` 公开端点 |
-| `/audit-logs` | 审计日志（定义在 `system.py` 的 `audit_router`） |
-| `/gateway` | 网关状态与启停控制 |
-| `/sync` | 数据同步配置与接收端点 |
-
-## 前端技术栈
-
-- **框架**：React 18 + TypeScript
-- **构建工具**：Vite 5
-- **样式**：Tailwind CSS v4 + PostCSS + Autoprefixer
-- **组件库**：shadcn/ui（基于 Radix UI）、Ant Design
-- **状态管理**：Zustand
-- **路由**：React Router v6
-- **HTTP 客户端**：Axios
-- **图表**：ECharts + echarts-for-react
-- **动画**：Framer Motion
-- **日期处理**：dayjs
-- **Markdown 渲染**：react-markdown
-- **图标**：lucide-react、@ant-design/icons
-- **中文字体**：@chinese-fonts/maple-mono-cn、@chinese-fonts/mksjh
-
-## 项目结构
-
+````
+<userPrompt>
+Provide the fully rewritten file, incorporating the suggested code change. You must produce the complete file.
+</userPrompt>
 ```
-hermes-panel/
-├── backend/
-│   ├── api/               # FastAPI 路由（按资源拆分）
-│   │   ├── auth.py        # 认证
-│   │   ├── channels.py    # 渠道
-│   │   ├── config.py      # 配置管理
-│   │   ├── gateway.py     # Gateway 控制
-│   │   ├── memory.py      # 记忆配置
-│   │   ├── models_config.py # 模型配置
-│   │   ├── plugins.py     # 插件管理
-│   │   ├── profile_files.py # Profile 文件
-│   │   ├── profile_stats.py # Profile 统计 + 主机信息
-│   │   ├── profiles.py    # Profile 列表
-│   │   ├── skills.py      # Skills 管理
-│   │   ├── sync.py        # 数据同步
-│   │   ├── system.py      # 系统指标、WebSocket、审计日志
-│   │   ├── tokens.py      # Token 用量
-│   │   └── users.py       # 用户管理
-│   ├── auth/              # JWT 认证与依赖
-│   │   ├── dependencies.py
-│   │   ├── models.py
-│   │   └── service.py
-│   ├── db/                # 数据库连接、schema、模型
-│   │   ├── database.py
-│   │   └── models.py
-│   ├── services/          # 业务逻辑
-│   │   ├── audit_log.py
-│   │   ├── cli_utils.py   # CLI 发现、子进程环境、原子写入
-│   │   ├── env_service.py
-│   │   ├── gateway_service.py
-│   │   ├── hermes_info_service.py
-│   │   ├── hermes_update_service.py
-│   │   ├── host_info_service.py
-│   │   ├── profile_service.py
-│   │   ├── profile_stats_service.py
-│   │   ├── skill_service.py
-│   │   ├── state_reader.py
-│   │   ├── sync_service.py
-│   │   ├── system_monitor.py
-│   │   └── yaml_service.py
-│   ├── tests/             # pytest 后端测试
-│   │   ├── test_api.py
-│   │   ├── test_services.py
-│   │   └── test_spa.py
-│   ├── config.py          # 配置加载（config.yaml）与环境变量管理
-│   └── main.py            # FastAPI 入口、静态文件 serve、后台任务
-├── frontend/
-│   └── src/
-│       ├── pages/         # 页面组件
-│       │   ├── Dashboard.tsx
-│       │   ├── ProfileStats.tsx
-│       │   ├── ProfileConfig.tsx
-│       │   ├── SkillsManager.tsx
-│       │   ├── PluginsManager.tsx
-│       │   ├── ModelsConfig.tsx
-│       │   ├── ChannelsConfig.tsx
-│       │   ├── MemoryConfig.tsx
-│       │   ├── SoulPage.tsx
-│       │   ├── TokenUsage.tsx
-│       │   ├── Settings.tsx
-│       │   ├── Login.tsx
-│       │   └── SectionPage.tsx
-│       ├── components/    # 通用组件与布局
-│       │   ├── AppLayout.tsx
-│       │   ├── ChannelFormModal.tsx
-│       │   ├── ConfirmDialog.tsx
-│       │   ├── EmptyState.tsx
-│       │   ├── ErrorAlert.tsx
-│       │   ├── ErrorBoundary.tsx
-│       │   ├── JsonEditor.tsx
-│       │   ├── Loading.tsx
-│       │   ├── PageContainer.tsx
-│       │   ├── PageHeader.tsx
-│       │   ├── ProviderEditModal.tsx
-│       │   └── ui/        # shadcn/ui 组件
-│       ├── store/         # Zustand 状态管理
-│       │   ├── authStore.ts
-│       │   └── configStore.ts
-│       ├── hooks/         # 通用 hooks
-│       │   ├── useApi.ts
-│       │   └── use-toast.ts
-│       ├── api/           # Axios API 客户端
-│       │   └── client.ts
-│       ├── config/        # 渠道等前端配置定义
-│       │   ├── channelDefs.ts
-│       │   └── profileCategories.ts
-│       ├── lib/           # 通用库工具（如 cn 等工具函数）
-│       │   └── utils.ts
-│       ├── utils/         # 格式化等辅助函数
-│       │   └── format.ts
-│       ├── types.ts       # TypeScript 类型定义
-│       ├── App.tsx        # 路由与顶层布局
-│       ├── main.tsx       # 入口
-│       ├── index.css      # 全局样式
-│       └── styles.css     # 额外样式
-├── Makefile               # 统一命令入口
-├── pyproject.toml         # Python 依赖与工具配置
-├── config.yaml.example    # 配置模板
-└── README.md              # 项目说明
-```
-
-## License
-
-MIT
