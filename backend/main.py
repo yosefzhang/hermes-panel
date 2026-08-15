@@ -30,12 +30,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import (
-    audit,
     auth,
     channels,
     config,
     gateway,
-    host_info,
     memory,
     models_config,
     plugins,
@@ -218,7 +216,6 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         profile_files.router,
         profile_stats.router,
         profiles.router,
-        host_info.router,
         skills.router,
         plugins.router,
         models_config.router,
@@ -226,9 +223,9 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         memory.router,
         tokens.router,
         system.router,
+        system.audit_router,
         gateway.router,
         sync.router,
-        audit.router,
     ]
 
     for router in routers:

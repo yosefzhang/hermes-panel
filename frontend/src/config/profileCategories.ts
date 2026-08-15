@@ -32,6 +32,16 @@ export const profileCategories: ProfileCategory[] = [
       { key: 'hermes_lark_streaming', label: 'Lark Streaming' },
     ],
   },
+  {
+    key: 'memory',
+    label: '记忆',
+    sections: [],
+  },
+  {
+    key: 'soul',
+    label: 'SOUL',
+    sections: [],
+  },
 ];
 
 export function findProfileCategory(key: string | null): ProfileCategory {

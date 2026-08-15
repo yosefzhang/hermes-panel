@@ -7,13 +7,12 @@ under the sender's host, username and IP combination.
 from __future__ import annotations
 
 import asyncio
-import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from backend.auth.dependencies import require_admin
-from backend.config import Settings, get_settings, update_env_file
+from backend.config import Settings, get_settings, update_config_file
 from backend.db.models import User
 from backend.services.sync_service import SyncService, get_receive_status, get_send_status, set_receive_enabled, set_send_enabled
 
@@ -60,25 +59,17 @@ async def update_sync_settings(
     body: SyncSettingsIn,
     user: User = Depends(require_admin),
 ):
-    """Persist sync configuration to the panel's .env file."""
+    """Persist sync configuration to the panel's config.yaml file."""
     app_settings: Settings = request.app.state.settings
-    updates = {
-        "SYNC_ENABLED": "true" if body.enabled else "false",
-        "SYNC_RECEIVE_ENABLED": "true" if body.receive_enabled else "false",
-        "SYNC_TARGET_URL": body.target_url or None,
-        "SYNC_TOKEN": body.token or None,
-        "SYNC_INTERVAL": str(body.interval),
-    }
-    update_env_file(updates)
-
-    # Sync os.environ so get_settings() (which creates a fresh Settings
-    # instance and only reads env vars NOT already in os.environ) returns
-    # the updated values on the next call.
-    for key, value in updates.items():
-        if value is not None:
-            os.environ[key] = value
-        elif key in os.environ:
-            del os.environ[key]
+    update_config_file({
+        "sync": {
+            "enabled": body.enabled,
+            "receive_enabled": body.receive_enabled,
+            "target_url": body.target_url,
+            "token": body.token,
+            "interval": body.interval,
+        }
+    })
 
     set_receive_enabled(body.receive_enabled)
     set_send_enabled(body.enabled)

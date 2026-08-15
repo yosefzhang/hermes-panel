@@ -74,7 +74,7 @@ except ImportError as exc:
     }
     CHANNEL_MANAGED_KEYS = set()
 
-from .atomic_io import atomic_write_text
+from .cli_utils import atomic_write_text
 from .profile_service import ProfileService
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 import threading
@@ -8,8 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from backend.services.cli_runner import find_command
-from backend.services.subprocess_utils import get_clean_env
+from backend.services.cli_utils import find_command, get_clean_env
+
+
+logger = logging.getLogger(__name__)
 
 # 模块级升级状态（单例，全局唯一）
 _upgrade_state: dict = {
@@ -51,13 +54,16 @@ class HermesUpdateService:
         if not self.hermes_bin:
             return "unknown"
         try:
+            full_cmd = [self.hermes_bin, "--version"]
+            logger.info("_get_current_version: running cmd=%s", full_cmd)
             result = subprocess.run(
-                [self.hermes_bin, "--version"],
+                full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=5,
                 env=get_clean_env(),
             )
+            logger.info("_get_current_version: cmd=%s rc=%d", full_cmd, result.returncode)
             if result.returncode == 0:
                 # 例："Hermes Agent v0.18.0 (2026.7.1) · upstream ..."
                 match = re.search(r"(\d+\.\d+\.\d+)", result.stdout)
@@ -88,16 +94,23 @@ class HermesUpdateService:
         if not self.hermes_bin:
             return None, ""
         try:
+            full_cmd = [self.hermes_bin, "update", "--check"]
+            logger.info("_cli_check: running cmd=%s", full_cmd)
             result = subprocess.run(
-                [self.hermes_bin, "update", "--check"],
+                full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 env=get_clean_env(),
             )
         except Exception as exc:  # noqa: BLE001 - 检查失败一律视为不可判定
+            logger.error("_cli_check: cmd=%s failed: %s", full_cmd, exc)
             return None, f"update --check failed: {exc}"
 
+        logger.info(
+            "_cli_check: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+            full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+        )
         output = f"{result.stdout}\n{result.stderr}".strip()
         lowered = output.lower()
 
@@ -222,8 +235,10 @@ class HermesUpdateService:
         def _run_upgrade():
             global _upgrade_state
             try:
+                full_cmd = [hermes_bin, "update"]
+                logger.info("_run_upgrade: running cmd=%s", full_cmd)
                 proc = subprocess.Popen(
-                    [hermes_bin, "update"],
+                    full_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,

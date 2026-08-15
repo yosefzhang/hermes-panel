@@ -17,12 +17,17 @@ class RawConfigUpdate(BaseModel):
     content: str
 
 
+class SectionUpdate(BaseModel):
+    section: str
+    payload: dict[str, Any]
+
+
 def yaml_service(request: Request) -> YamlService:
     return YamlService()
 
 
 @router.get("")
-def get_config(
+async def get_config(
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
     service: YamlService = Depends(yaml_service),
@@ -32,7 +37,7 @@ def get_config(
 
 
 @router.get("/sections")
-def list_sections(
+async def list_sections(
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
     service: YamlService = Depends(yaml_service),
@@ -42,7 +47,7 @@ def list_sections(
 
 
 @router.get("/sections/{name}")
-def get_section(
+async def get_section(
     name: str,
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
@@ -53,7 +58,7 @@ def get_section(
 
 
 @router.put("/sections/{name}")
-def update_section(
+async def update_section(
     name: str,
     payload: dict[str, Any],
     profile: str = Query("default"),
@@ -66,7 +71,7 @@ def update_section(
 
 
 @router.get("/raw")
-def get_raw_config(
+async def get_raw_config(
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
     service: YamlService = Depends(yaml_service),
@@ -76,7 +81,7 @@ def get_raw_config(
 
 
 @router.put("/raw")
-def update_raw_config(
+async def update_raw_config(
     payload: RawConfigUpdate,
     profile: str = Query("default"),
     user: User = Depends(get_current_user),

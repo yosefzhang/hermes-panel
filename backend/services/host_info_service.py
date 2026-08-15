@@ -87,7 +87,7 @@ class HostInfoService:
 
     def collect_local_host_info(self) -> HostInfo:
         """Gather local host metadata from Hermes CLI and system tools."""
-        info_svc = HermesInfoService(self.settings.hermes_home)
+        info_svc = HermesInfoService(self.settings.hermes_home, settings=self.settings)
         versions = info_svc.get_system_versions()
         home_info = info_svc.get_hermes_home_info()
         host = socket.gethostname()

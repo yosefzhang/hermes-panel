@@ -128,179 +128,182 @@ class StateReader:
             source_table = "session_model_usage" if has_usage_table else "sessions"
             logger.debug("get_dashboard_data: profile=%s using source=%s", profile, source_table)
 
-            if has_usage_table:
-                s = dict(
-                    connection.execute(
-                        """
-                        SELECT
-                            COUNT(DISTINCT session_id) AS total_sessions,
-                            COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
-                            COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read,
-                            COALESCE(SUM(cache_write_tokens), 0) AS total_cache_write,
-                            COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
-                        FROM session_model_usage
-                        """
-                    ).fetchone()
-                )
-            else:
-                s = dict(
-                    connection.execute(
-                        """
-                        SELECT
-                            COUNT(*) AS total_sessions,
-                            COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
-                            COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read,
-                            COALESCE(SUM(cache_write_tokens), 0) AS total_cache_write,
-                            COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
-                        FROM sessions
-                        """
-                    ).fetchone()
-                )
+            summary = self._read_summary(connection, has_usage_table)
+            daily = self._read_daily(connection, has_usage_table)
+            by_model = self._read_by_model(connection, has_usage_table)
+            by_provider = self._read_by_provider(connection, has_usage_table)
 
-            total_tokens = s["total_input_tokens"] + s["total_output_tokens"]
-            s["total_tokens"] = total_tokens
-            s["total_cost_usd"] = round(s["total_cost"], 6)
-            total_input_all = s["total_input_tokens"] + s["total_cache_read"]
-            s["cache_hit_rate"] = round(s["total_cache_read"] / total_input_all * 100, 1) if total_input_all > 0 else 0.0
+            total_tokens = summary["total_input_tokens"] + summary["total_output_tokens"]
+            summary["total_tokens"] = total_tokens
+            summary["total_cost_usd"] = round(summary["total_cost"], 6)
+            total_input_all = summary["total_input_tokens"] + summary["total_cache_read"]
+            summary["cache_hit_rate"] = round(summary["total_cache_read"] / total_input_all * 100, 1) if total_input_all > 0 else 0.0
 
-            logger.debug(
-                "get_dashboard_data: profile=%s summary sessions=%d tokens=%d cache_hit=%.1f%%",
-                profile, s["total_sessions"], total_tokens, s["cache_hit_rate"],
-            )
-
-            if has_usage_table:
-                daily = [
-                    dict(r)
-                    for r in connection.execute(
-                        """
-                        SELECT
-                            date(last_seen, 'unixepoch') AS day,
-                            COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
-                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS output_tokens
-                        FROM session_model_usage
-                        WHERE last_seen IS NOT NULL
-                        GROUP BY day
-                        ORDER BY day
-                        """
-                    ).fetchall()
-                ]
-            else:
-                daily = [
-                    dict(r)
-                    for r in connection.execute(
-                        """
-                        SELECT
-                            date(started_at, 'unixepoch') AS day,
-                            COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
-                            COALESCE(SUM(input_tokens), 0) AS input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS output_tokens
-                        FROM sessions
-                        GROUP BY day
-                        ORDER BY day
-                        """
-                    ).fetchall()
-                ]
-
-            if has_usage_table:
-                by_model = [
-                    {
-                        "model": r["model"] or "unknown",
-                        "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
-                        "sessions": r["sessions"],
-                    }
-                    for r in connection.execute(
-                        """
-                        SELECT
-                            model,
-                            COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
-                            COUNT(DISTINCT session_id) AS sessions
-                        FROM session_model_usage
-                        GROUP BY model
-                        ORDER BY (total_input_tokens + total_output_tokens) DESC
-                        """
-                    ).fetchall()
-                ]
-            else:
-                by_model = [
-                    {
-                        "model": r["model"] or "unknown",
-                        "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
-                        "sessions": r["sessions"],
-                    }
-                    for r in connection.execute(
-                        """
-                        SELECT
-                            model,
-                            COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
-                            COUNT(*) AS sessions
-                        FROM sessions
-                        GROUP BY model
-                        ORDER BY (total_input_tokens + total_output_tokens) DESC
-                        """
-                    ).fetchall()
-                ]
-
-            if has_usage_table:
-                by_provider = [
-                    {
-                        "provider": r["provider"] or "unknown",
-                        "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
-                        "sessions": r["sessions"],
-                    }
-                    for r in connection.execute(
-                        """
-                        SELECT
-                            COALESCE(billing_provider, 'unknown') AS provider,
-                            COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
-                            COUNT(DISTINCT session_id) AS sessions
-                        FROM session_model_usage
-                        GROUP BY provider
-                        ORDER BY (total_input_tokens + total_output_tokens) DESC
-                        """
-                    ).fetchall()
-                ]
-            else:
-                by_provider = [
-                    {
-                        "provider": r["provider"] or "unknown",
-                        "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
-                        "sessions": r["sessions"],
-                    }
-                    for r in connection.execute(
-                        """
-                        SELECT
-                            COALESCE(billing_provider, 'unknown') AS provider,
-                            COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
-                            COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
-                            COUNT(*) AS sessions
-                        FROM sessions
-                        GROUP BY provider
-                        ORDER BY (total_input_tokens + total_output_tokens) DESC
-                        """
-                    ).fetchall()
-                ]
-
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            today_tokens = next((d["total_tokens"] for d in daily if d["day"] == today_str), 0)
             logger.debug(
                 "get_dashboard_data: profile=%s days=%d today(%s)=%d top_model=%s(%d tokens)",
-                profile, len(daily), today_str, today_tokens,
+                profile, len(daily), datetime.now().strftime("%Y-%m-%d"),
+                next((d["total_tokens"] for d in daily if d["day"] == datetime.now().strftime("%Y-%m-%d")), 0),
                 by_model[0]["model"] if by_model else "N/A",
                 by_model[0]["total_tokens"] if by_model else 0,
             )
 
         return {
-            "summary": s,
+            "summary": summary,
             "by_model": by_model,
             "by_provider": by_provider,
             "daily": daily,
         }
+
+    def _read_summary(self, connection: sqlite3.Connection, has_usage_table: bool) -> dict:
+        """Read summary statistics from the appropriate source table."""
+        if has_usage_table:
+            return dict(
+                connection.execute(
+                    """
+                    SELECT
+                        COUNT(DISTINCT session_id) AS total_sessions,
+                        COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                        COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+                        COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read,
+                        COALESCE(SUM(cache_write_tokens), 0) AS total_cache_write,
+                        COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
+                    FROM session_model_usage
+                    """
+                ).fetchone()
+            )
+        return dict(
+            connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_sessions,
+                    COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read,
+                    COALESCE(SUM(cache_write_tokens), 0) AS total_cache_write,
+                    COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
+                FROM sessions
+                """
+            ).fetchone()
+        )
+
+    def _read_daily(self, connection: sqlite3.Connection, has_usage_table: bool) -> list[dict]:
+        """Read daily token usage from the appropriate source table."""
+        if has_usage_table:
+            return [
+                dict(r)
+                for r in connection.execute(
+                    """
+                    SELECT
+                        date(last_seen, 'unixepoch') AS day,
+                        COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
+                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                        COALESCE(SUM(output_tokens), 0) AS output_tokens
+                    FROM session_model_usage
+                    WHERE last_seen IS NOT NULL
+                    GROUP BY day
+                    ORDER BY day
+                    """
+                ).fetchall()
+            ]
+        return [
+            dict(r)
+            for r in connection.execute(
+                """
+                SELECT
+                    date(started_at, 'unixepoch') AS day,
+                    COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens
+                FROM sessions
+                GROUP BY day
+                ORDER BY day
+                """
+            ).fetchall()
+        ]
+
+    def _read_by_model(self, connection: sqlite3.Connection, has_usage_table: bool) -> list[dict]:
+        """Read model-level breakdown from the appropriate source table."""
+        if has_usage_table:
+            return [
+                {
+                    "model": r["model"] or "unknown",
+                    "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
+                    "sessions": r["sessions"],
+                }
+                for r in connection.execute(
+                    """
+                    SELECT
+                        model,
+                        COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                        COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+                        COUNT(DISTINCT session_id) AS sessions
+                    FROM session_model_usage
+                    GROUP BY model
+                    ORDER BY (total_input_tokens + total_output_tokens) DESC
+                    """
+                ).fetchall()
+            ]
+        return [
+            {
+                "model": r["model"] or "unknown",
+                "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
+                "sessions": r["sessions"],
+            }
+            for r in connection.execute(
+                """
+                SELECT
+                    model,
+                    COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+                    COUNT(*) AS sessions
+                FROM sessions
+                GROUP BY model
+                ORDER BY (total_input_tokens + total_output_tokens) DESC
+                """
+            ).fetchall()
+        ]
+
+    def _read_by_provider(self, connection: sqlite3.Connection, has_usage_table: bool) -> list[dict]:
+        """Read provider-level breakdown from the appropriate source table."""
+        if has_usage_table:
+            return [
+                {
+                    "provider": r["provider"] or "unknown",
+                    "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
+                    "sessions": r["sessions"],
+                }
+                for r in connection.execute(
+                    """
+                    SELECT
+                        COALESCE(billing_provider, 'unknown') AS provider,
+                        COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                        COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+                        COUNT(DISTINCT session_id) AS sessions
+                    FROM session_model_usage
+                    GROUP BY provider
+                    ORDER BY (total_input_tokens + total_output_tokens) DESC
+                    """
+                ).fetchall()
+            ]
+        return [
+            {
+                "provider": r["provider"] or "unknown",
+                "total_tokens": r["total_input_tokens"] + r["total_output_tokens"],
+                "sessions": r["sessions"],
+            }
+            for r in connection.execute(
+                """
+                SELECT
+                    COALESCE(billing_provider, 'unknown') AS provider,
+                    COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+                    COUNT(*) AS sessions
+                FROM sessions
+                GROUP BY provider
+                ORDER BY (total_input_tokens + total_output_tokens) DESC
+                """
+            ).fetchall()
+        ]
 
     def list_used_models(self, profile: str | None = None) -> list[str]:
         db_path = self.profiles.get_state_db_path(profile)

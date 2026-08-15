@@ -32,7 +32,7 @@ make dev
 - 后端：http://127.0.0.1:8650（FastAPI + Uvicorn，热重载）
 - 前端：http://127.0.0.1:5173（Vite dev server，HMR）
 
-首次启动会自动将 `.env.example` 复制到 `~/.config/hermes-panel/.env` 并据此创建默认管理员 `admin`。默认密码在 `.env.example` 中为 `changeme`，若 `HERMES_PANEL_DEFAULT_ADMIN_PASSWORD` 环境变量未设置则使用该值；生产环境务必通过环境变量修改：
+首次启动会自动将 `config.yaml.example` 复制到 `~/.config/hermes-panel/config.yaml` 并据此创建默认管理员 `admin`。默认密码在 `config.yaml.example` 中为 `changeme`，若 `HERMES_PANEL_DEFAULT_ADMIN_PASSWORD` 环境变量未设置则使用该值；生产环境务必通过环境变量修改：
 
 ```bash
 export HERMES_PANEL_DEFAULT_ADMIN_PASSWORD='your-secure-password'
@@ -63,28 +63,42 @@ make stop         # 停止占用 8650 / 5173 端口的进程
 
 ## 配置
 
-将 `.env.example` 复制到 `~/.config/hermes-panel/.env` 并按需修改，启动时会自动加载（可用 `HERMES_PANEL_ENV` 覆盖路径）。已存在的 shell 环境变量优先级高于该文件；若该文件不存在，会自动从项目根目录的 `.env.example` 拷贝生成。
+将 `config.yaml.example` 复制到 `~/.config/hermes-panel/config.yaml` 并按需修改，启动时会自动加载（可用 `HERMES_PANEL_CONFIG` 环境变量覆盖路径）。已存在的 shell 环境变量优先级高于配置文件；若该文件不存在，会自动从项目根目录的 `config.yaml.example` 拷贝生成。
 
 ```bash
-mkdir -p ~/.config/hermes-panel && cp .env.example ~/.config/hermes-panel/.env
+mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel/config.yaml
 ```
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `HERMES_HOME` | Hermes Agent 数据目录（启动时强制设置为 `~/.hermes`，并清除 `HERMES_PROFILE`，使面板不绑定任何 profile） | `~/.hermes` |
-| `HERMES_PANEL_ENV` | Panel 自身 `.env` 文件路径 | `~/.config/hermes-panel/.env` |
-| `HERMES_PANEL_DB` | Panel 自身 SQLite 数据库路径 | `~/.config/hermes-panel/hermes-panel.db` |
-| `HERMES_PANEL_JWT_SECRET` | JWT 签名密钥（生产环境必须修改） | `change-me-in-production-hermes-panel-secret-key`（`.env.example` 中为 `changeme`） |
-| `HERMES_PANEL_DEFAULT_ADMIN_PASSWORD` | 首次启动创建的 admin 密码（也兼容旧变量名 `HERMES_PANEL_DEFAULT_PASSWORD`） | `admin`（`.env.example` 中为 `changeme`） |
-| `HERMES_PANEL_LOG_FILE` | 后端日志文件路径 | `~/.config/hermes-panel/hermes-panel.log` |
-| `HERMES_PANEL_LOG_LEVEL` | 后端日志级别 | `INFO` |
-| `HERMES_PANEL_LOG_MAX_BYTES` | 单个日志文件最大大小（字节） | `5242880`（5 MB） |
-| `HERMES_PANEL_LOG_BACKUP_COUNT` | 保留的归档日志文件数 | `5` |
-| `SYNC_ENABLED` | 是否向目标面板推送数据 | `false` |
-| `SYNC_RECEIVE_ENABLED` | 是否接收其它面板推送的数据 | `false` |
-| `SYNC_TARGET_URL` | 数据同步目标面板地址 | - |
-| `SYNC_TOKEN` | 数据同步鉴权 token（仅发送端用作 `Authorization: Bearer` 请求头） | - |
-| `SYNC_INTERVAL` | 数据同步推送间隔（秒） | `60` |
+### 配置文件项（config.yaml）
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `hermes_path` | Hermes Agent 数据目录 | `~/.hermes` |
+| `db_path` | Panel SQLite 数据库路径 | `~/.config/hermes-panel/hermes-panel.db` |
+| `jwt_secret` | JWT 签名密钥（生产环境必须修改） | `changeme` |
+| `default_admin_password` | 首次启动创建的 admin 密码 | `changeme` |
+| `log_file` | 后端日志文件路径 | `~/.config/hermes-panel/hermes-panel.log` |
+| `log_level` | 后端日志级别 | `INFO` |
+| `component_versions` | 要查询版本号的组件列表，每项含 `name`/`command`/`args`/`regex` | hermes, node, npm, git, lark-cli, quectel-cli |
+| `sync.enabled` | 是否向目标面板推送数据 | `false` |
+| `sync.receive_enabled` | 是否接收其它面板推送的数据 | `false` |
+| `sync.target_url` | 数据同步目标面板地址 | - |
+| `sync.token` | 数据同步鉴权 token（仅发送端用作 `Authorization: Bearer` 请求头） | - |
+| `sync.interval` | 数据同步推送间隔（秒） | `600` |
+
+### 环境变量覆盖
+
+以下环境变量如果设置，会覆盖配置文件中的对应项：
+
+| 环境变量 | 覆盖的配置项 |
+|----------|-------------|
+| `HERMES_PATH` | `hermes_path` |
+| `HERMES_PANEL_DB` | `db_path` |
+| `HERMES_PANEL_JWT_SECRET` | `jwt_secret` |
+| `HERMES_PANEL_DEFAULT_ADMIN_PASSWORD` | `default_admin_password` |
+| `HERMES_PANEL_LOG_FILE` | `log_file` |
+| `HERMES_PANEL_LOG_LEVEL` | `log_level` |
+| `HERMES_PANEL_CONFIG` | 配置文件路径本身 |
 
 配置加载与更新逻辑见 [`backend/config.py`](backend/config.py)。
 
@@ -156,14 +170,14 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 - Profile 列表与路径解析：[backend/api/profiles.py](backend/api/profiles.py)、[backend/services/profile_service.py](backend/services/profile_service.py)
 - `config.yaml` section 编辑与原始 YAML 编辑：[backend/api/config.py](backend/api/config.py)、[backend/services/yaml_service.py](backend/services/yaml_service.py)
 - `.env` 掩码查看与增删改：[backend/api/profile_files.py](backend/api/profile_files.py)、[backend/services/env_service.py](backend/services/env_service.py)
-- 写入前校验与自动备份：[backend/services/yaml_service.py](backend/services/yaml_service.py)、[backend/services/atomic_io.py](backend/services/atomic_io.py)
+- 写入前校验与自动备份：[backend/services/yaml_service.py](backend/services/yaml_service.py)、[backend/services/cli_utils.py](backend/services/cli_utils.py)（原子写入）
 
 ### Skills 与 Plugins
 
 - Skills 列表、来源判定、启用/禁用：[backend/api/skills.py](backend/api/skills.py)、[backend/services/skill_service.py](backend/services/skill_service.py)
 - Plugins 列表、启用、禁用、删除：[backend/api/plugins.py](backend/api/plugins.py)
-- 调用 Hermes CLI 时的 profile 前缀定位：[backend/services/cli_runner.py](backend/services/cli_runner.py)
-- 统一的子进程执行封装：[backend/services/subprocess_utils.py](backend/services/subprocess_utils.py)（所有 subprocess 调用均记录 cmd / rc / stdout/stderr 长度到日志）
+- 调用 Hermes CLI 时的 profile 前缀定位：[backend/services/cli_utils.py](backend/services/cli_utils.py)
+- 统一的子进程执行封装：[backend/services/cli_utils.py](backend/services/cli_utils.py)（所有 subprocess 调用均记录 cmd / rc / stdout/stderr 长度到日志）
 
 ### 模型、渠道、Memory、SOUL
 
@@ -179,7 +193,7 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 - 主机信息采集：[backend/services/host_info_service.py](backend/services/host_info_service.py)
 - Hermes / 组件版本信息汇总（面板与多 profile 维度）：[backend/services/hermes_info_service.py](backend/services/hermes_info_service.py)
 - Token 用量聚合（读取 Hermes `state.db`）：[backend/services/state_reader.py](backend/services/state_reader.py)
-- Dashboard 后端接口：[backend/api/profile_stats.py](backend/api/profile_stats.py) (`/profiles/aggregated`)、[backend/api/host_info.py](backend/api/host_info.py) (`/host-info`)、[backend/api/tokens.py](backend/api/tokens.py) (`/tokens`)
+- Dashboard 后端接口：[backend/api/profile_stats.py](backend/api/profile_stats.py) (`/profiles/aggregated`)、[backend/api/tokens.py](backend/api/tokens.py) (`/tokens`)
 - Dashboard 前端：[frontend/src/pages/Dashboard.tsx](frontend/src/pages/Dashboard.tsx)
 - Profiles 聚合页（多主机 profile 统计 + 主机元数据）：[frontend/src/pages/ProfileStats.tsx](frontend/src/pages/ProfileStats.tsx)
 
@@ -196,7 +210,7 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 
 ### 审计日志
 
-- 操作审计写入与查询：[backend/api/audit.py](backend/api/audit.py)（路由前缀 `/audit-logs`）
+- 操作审计写入与查询：[backend/api/system.py](backend/api/system.py)（`audit_router`，路由前缀 `/audit-logs`）
 - 审计日志服务：[backend/services/audit_log.py](backend/services/audit_log.py)
 
 ## 数据同步机制
@@ -205,15 +219,17 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 
 ### 同步配置
 
-| 配置项 | 环境变量 | 说明 |
-|--------|----------|------|
-| 发送数据同步 | `SYNC_ENABLED` | 本机是否定时把本地数据推送到目标面板 |
-| 接收数据同步 | `SYNC_RECEIVE_ENABLED` | 本机是否接收其它面板推送的数据 |
-| 同步目标 | `SYNC_TARGET_URL` | 接收数据的目标面板地址，例如 `http://192.168.1.10:8650` |
-| 同步 token | `SYNC_TOKEN` | 发送端把它作为 `Authorization: Bearer` 请求头发给目标面板 |
-| 同步间隔 | `SYNC_INTERVAL` | 默认 60 秒 |
+同步配置通过 `config.yaml` 的 `sync` 段管理，也可在前端设置页编辑（自动写回 `config.yaml`）。
 
-> 注意：当前接收端 `POST /api/v1/sync/` 要求 **admin JWT** 鉴权，并不会在服务端校验 `SYNC_TOKEN`。`SYNC_TOKEN` 仅用于发送端构造请求头；如需让子面板无交互推送，需在目标面板持有有效的 admin token，或后续扩展接收端鉴权策略。
+| 配置项 | 说明 |
+|--------|------|
+| `sync.enabled` | 本机是否定时把本地数据推送到目标面板 |
+| `sync.receive_enabled` | 本机是否接收其它面板推送的数据 |
+| `sync.target_url` | 接收数据的目标面板地址，例如 `http://192.168.1.10:8650` |
+| `sync.token` | 发送端把它作为 `Authorization: Bearer` 请求头发给目标面板 |
+| `sync.interval` | 默认 600 秒 |
+
+> 接收端 `POST /api/v1/sync/` 校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.token` 一致。
 
 ### 数据流向
 
@@ -228,7 +244,7 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
   │                               ▼             │
   │                    SyncService.push()       │
   │                               │             │
-  │                               │ POST /api/v1/sync/（admin JWT）
+  │                               │ POST /api/v1/sync/（sync token）
   │                               │             │
   │                               ▼             │
   │                    SyncService.ingest() ◄───┘
@@ -250,7 +266,7 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
    - 启动时先执行一次完整采集，确保首次渲染有完整数据
    - 两个周期共用 `_collect_lock` 防止并发写入导致 `database is locked`
    - SQLite 使用 WAL 模式 + busy_timeout=10s 防止读写锁冲突
-2. `_run_sync_loop`：若 `SYNC_ENABLED=true` 且配置了 `SYNC_TARGET_URL`，则每 `SYNC_INTERVAL` 秒把本地数据 POST 到目标面板
+2. `_run_sync_loop`：若 `sync.enabled=true` 且配置了 `sync.target_url`，则每 `sync.interval` 秒把本地数据 POST 到目标面板
 
 > 前端"刷新"按钮（`POST /api/v1/profiles/aggregated/refresh`）会触发一次完整采集，不受后台定时周期限制。
 
@@ -258,8 +274,8 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
 
 目标面板收到 `POST /api/v1/sync/` 后：
 
-1. 校验请求携带的 admin JWT（`require_admin` 依赖）
-2. 检查 `SYNC_RECEIVE_ENABLED`，未启用则返回 400
+1. 校验请求头 `Authorization: Bearer <token>` 中的 token 与接收端 `sync.token` 一致
+2. 检查 `sync.receive_enabled`，未启用则返回 400
 3. 调用 `SyncService.ingest()` 把 payload 中的 `profiles` 写入本地统一的 `profiles` 表，主机元数据随每个 profile 行一起更新
 4. 数据按发送方的 `(host, username, ip, profile_name)` 区分，不会覆盖本机数据
 
@@ -273,7 +289,7 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
 
 `profiles` 表中的数据会按 `(host, username, ip)`（即 `server_id`）分组，在左侧导航以"主机 → Profile → 配置分类"的树形展示，并在 Dashboard 汇总多主机数据。详情见：
 
-- 聚合接口：[backend/api/profile_stats.py](backend/api/profile_stats.py) (`/profiles/aggregated`)、[backend/api/host_info.py](backend/api/host_info.py)
+- 聚合接口：[backend/api/profile_stats.py](backend/api/profile_stats.py) (`/profiles/aggregated`、`/profiles/aggregated/hosts`)
 - 侧边栏：[frontend/src/components/AppLayout.tsx](frontend/src/components/AppLayout.tsx)
 
 ## API 概览
@@ -287,18 +303,17 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
 | `/config` | config.yaml section / 原始 YAML 读写 |
 | `/profile-files` | profile 下 config / .env / SOUL / USER / MEMORY 文件读写（.env 掩码，SOUL.md 支持大小写） |
 | `/profiles` | profile 列表与详情 |
-| `/profiles/aggregated` | profile 统计聚合（含多主机），`/refresh` 触发全量采集 |
+| `/profiles/aggregated` | profile 统计聚合（含多主机），`/refresh` 触发全量采集，`/hosts` 主机信息 |
 | `/skills` | skills 列表、读写、启用禁用、导入、external-dirs |
 | `/plugins` | 插件列表、启用、禁用、删除 |
 | `/models` | 模型 section、providers、预设、连通性测试 |
 | `/channels` | 渠道配置（config + .env） |
 | `/memory` | MEMORY.md / USER.md 文件预览与编辑 |
 | `/tokens` | token 用量聚合、趋势、仪表盘 |
-| `/host-info` | 主机信息聚合 |
 | `/system` | 系统指标、历史、版本、Hermes 更新（admin），`/ws/system` 实时推送，`/health` 公开端点 |
+| `/audit-logs` | 审计日志（定义在 `system.py` 的 `audit_router`） |
 | `/gateway` | 网关状态与启停控制 |
 | `/sync` | 数据同步配置与接收端点 |
-| `/audit-logs` | 审计日志 |
 
 ## 前端技术栈
 
@@ -322,21 +337,19 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
 hermes-panel/
 ├── backend/
 │   ├── api/               # FastAPI 路由（按资源拆分）
-│   │   ├── audit.py       # 审计日志
 │   │   ├── auth.py        # 认证
 │   │   ├── channels.py    # 渠道
 │   │   ├── config.py      # 配置管理
 │   │   ├── gateway.py     # Gateway 控制
-│   │   ├── host_info.py   # 主机信息
 │   │   ├── memory.py      # 记忆配置
 │   │   ├── models_config.py # 模型配置
 │   │   ├── plugins.py     # 插件管理
 │   │   ├── profile_files.py # Profile 文件
-│   │   ├── profile_stats.py # Profile 统计
+│   │   ├── profile_stats.py # Profile 统计 + 主机信息
 │   │   ├── profiles.py    # Profile 列表
 │   │   ├── skills.py      # Skills 管理
 │   │   ├── sync.py        # 数据同步
-│   │   ├── system.py      # 系统指标与 WebSocket
+│   │   ├── system.py      # 系统指标、WebSocket、审计日志
 │   │   ├── tokens.py      # Token 用量
 │   │   └── users.py       # 用户管理
 │   ├── auth/              # JWT 认证与依赖
@@ -347,9 +360,8 @@ hermes-panel/
 │   │   ├── database.py
 │   │   └── models.py
 │   ├── services/          # 业务逻辑
-│   │   ├── atomic_io.py
 │   │   ├── audit_log.py
-│   │   ├── cli_runner.py
+│   │   ├── cli_utils.py   # CLI 发现、子进程环境、原子写入
 │   │   ├── env_service.py
 │   │   ├── gateway_service.py
 │   │   ├── hermes_info_service.py
@@ -359,7 +371,6 @@ hermes-panel/
 │   │   ├── profile_stats_service.py
 │   │   ├── skill_service.py
 │   │   ├── state_reader.py
-│   │   ├── subprocess_utils.py
 │   │   ├── sync_service.py
 │   │   ├── system_monitor.py
 │   │   └── yaml_service.py
@@ -367,7 +378,7 @@ hermes-panel/
 │   │   ├── test_api.py
 │   │   ├── test_services.py
 │   │   └── test_spa.py
-│   ├── config.py          # 配置加载与环境变量管理
+│   ├── config.py          # 配置加载（config.yaml）与环境变量管理
 │   └── main.py            # FastAPI 入口、静态文件 serve、后台任务
 ├── frontend/
 │   └── src/
@@ -420,7 +431,7 @@ hermes-panel/
 │       └── styles.css     # 额外样式
 ├── Makefile               # 统一命令入口
 ├── pyproject.toml         # Python 依赖与工具配置
-├── .env.example           # 配置模板
+├── config.yaml.example    # 配置模板
 └── README.md              # 项目说明
 ```
 

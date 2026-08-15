@@ -2,15 +2,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .cli_runner import find_command
+from .cli_utils import find_command, get_profile_env
 from .profile_service import ProfileService
-from .subprocess_utils import get_profile_env
+
+
+logger = logging.getLogger(__name__)
+
+_PAST_TENSE = {
+    "start": "启动",
+    "stop": "停止",
+    "restart": "重启",
+}
 
 
 @dataclass
@@ -171,29 +180,35 @@ class GatewayService:
         return [hermes, "-p", profile, "gateway", action]
 
     def _run(self, profile: str, action: str, *, timeout: int) -> dict:
+        full_cmd = self._build_cmd(profile, action)
+        logger.info("gateway _run: running cmd=%s", full_cmd)
         try:
             env = get_profile_env(profile, self.hermes_home)
             result = subprocess.run(
-                self._build_cmd(profile, action),
+                full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 env=env,
             )
         except subprocess.TimeoutExpired:
+            logger.error("gateway _run: cmd=%s timeout", full_cmd)
             return {"success": False, "message": f"{action} 超时"}
         except FileNotFoundError:
+            logger.error("gateway _run: cmd=%s hermes not found", full_cmd)
             return {"success": False, "message": "找不到 hermes 命令"}
         except Exception as exc:
+            logger.error("gateway _run: cmd=%s failed: %s", full_cmd, exc)
             return {"success": False, "message": f"{action} 失败: {exc}"}
 
+        logger.info(
+            "gateway _run: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+            full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+        )
         if result.returncode == 0:
             return {"success": True, "message": f"Profile '{profile}' 的网关已{_PAST_TENSE[action]}"}
+        logger.warning(
+            "gateway _run: cmd=%s rc=%d stderr=%s",
+            full_cmd, result.returncode, result.stderr[:500],
+        )
         return {"success": False, "message": f"{action} 失败: {result.stderr or result.stdout}"}
-
-
-_PAST_TENSE = {
-    "start": "启动",
-    "stop": "停止",
-    "restart": "重启",
-}

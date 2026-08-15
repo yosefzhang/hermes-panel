@@ -5,47 +5,68 @@ import shutil
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+from ruamel.yaml import YAML
 
 CONFIG_DIR = Path.home() / ".config" / "hermes-panel"
 
 # Project root: config.py lives in backend/, so parent is the project root
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_ENV_EXAMPLE = _PROJECT_ROOT / ".env.example"
+_CONFIG_EXAMPLE = _PROJECT_ROOT / "config.yaml.example"
+
+# Default components whose versions are queried by ``get_system_versions``.
+# Each entry is ``{"command": str, "args": [str, ...]}``.
+_DEFAULT_COMPONENT_VERSIONS: list[dict] = [
+    {"name": "hermes", "command": "hermes", "args": ["--version"], "regex": r"v[\d.]+(?:\s*\([^)]+\))?"},
+    {"name": "node", "command": "node", "args": ["--version"]},
+    {"name": "npm", "command": "npm", "args": ["--version"]},
+    {"name": "git", "command": "git", "args": ["--version"], "regex": r"(\d+\.\d+(?:\.\d+)?)"},
+    {"name": "lark-cli", "command": "lark-cli", "args": ["--version"], "regex": r"(\d+\.\d+(?:\.\d+)?)"},
+    {"name": "quectel-cli", "command": "quectel-cli", "args": ["--version"], "regex": r"v?(\d+\.\d+(?:\.\d+)?)"},
+]
 
 
-def _ensure_env_file(env_path: Path) -> None:
-    """Create ~/.config/hermes-panel/.env from .env.example if missing."""
-    if env_path.is_file():
+def _config_path() -> Path:
+    """Return the resolved path to the panel's config.yaml."""
+    return Path(
+        os.environ.get("HERMES_PANEL_CONFIG", CONFIG_DIR / "config.yaml")
+    ).expanduser()
+
+
+def _ensure_config_file(path: Path) -> None:
+    """Create config.yaml from config.yaml.example if missing."""
+    if path.is_file():
         return
-    if not _ENV_EXAMPLE.is_file():
+    if _CONFIG_EXAMPLE.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_CONFIG_EXAMPLE, path)
         return
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(_ENV_EXAMPLE, env_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
 
 
-def _load_env_file() -> None:
-    """Load Panel's own `.env` into `os.environ` before building Settings.
+def _load_config_file() -> dict:
+    """Load the panel's ``config.yaml`` and return it as a plain dict.
 
-    Path defaults to `~/.config/hermes-panel/.env` and can be overridden
-    with `HERMES_PANEL_ENV`. Existing environment variables always win, so
-    real env / shell exports take priority over the file.
-
-    If the .env file does not exist, it is automatically created from the
-    project's .env.example template.
+    Real environment variables always take priority over file values for
+    the keys that have a corresponding env-var override (see *Settings*
+    field defaults).
     """
-    env_path = Path(os.environ.get("HERMES_PANEL_ENV", CONFIG_DIR / ".env")).expanduser()
-    _ensure_env_file(env_path)
-    if not env_path.is_file():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
+    path = _config_path()
+    _ensure_config_file(path)
+    if not path.is_file():
+        return {}
+    yaml = YAML(typ="safe")
+    data = yaml.load(path.read_text(encoding="utf-8"))
+    return data or {}
+
+
+def _save_config_file(data: dict) -> None:
+    """Write *data* back to config.yaml preserving key order."""
+    path = _config_path()
+    _ensure_config_file(path)
+    yaml = YAML()
+    yaml.default_flow_style = False
+    yaml.dump(data, path)
 
 
 class Settings(BaseModel):
@@ -99,67 +120,92 @@ class Settings(BaseModel):
     # Data sync to another hermes-panel instance.
     # When enabled, local profiles (profile stats + host metadata) are periodically
     # POSTed to the configured target panel.
-    sync_enabled: bool = Field(
-        default_factory=lambda: os.environ.get("SYNC_ENABLED", "false").lower() in ("true", "1", "yes")
-    )
-    sync_receive_enabled: bool = Field(
-        default_factory=lambda: os.environ.get("SYNC_RECEIVE_ENABLED", "false").lower() in ("true", "1", "yes")
-    )
-    sync_target_url: str | None = Field(
-        default_factory=lambda: os.environ.get("SYNC_TARGET_URL") or None
-    )
-    sync_token: str | None = Field(
-        default_factory=lambda: os.environ.get("SYNC_TOKEN") or None
-    )
-    sync_interval: int = Field(
-        default_factory=lambda: int(os.environ.get("SYNC_INTERVAL", "600"))
+    sync_enabled: bool = False
+    sync_receive_enabled: bool = False
+    sync_target_url: str | None = None
+    sync_token: str | None = None
+    sync_interval: int = 600
+
+    # Components whose versions are queried via CLI for the dashboard.
+    # Each entry: {"name": str, "command": str, "args": [str, ...]}
+    component_versions: list[dict] = Field(
+        default_factory=lambda: list(_DEFAULT_COMPONENT_VERSIONS)
     )
 
 
-def update_env_file(updates: dict[str, str | None]) -> None:
-    """Write key/value pairs to the Panel's own `.env` file.
+def _build_settings_from_file(data: dict) -> Settings:
+    """Build a Settings instance from the YAML config dict.
 
-    Missing keys are appended, existing keys are updated in-place, and keys
-    set to ``None`` are removed. Preserves comments and blank lines.
+    Environment variables (if set) override file values for the keys that
+    support env-var overrides.
     """
-    env_path = Path(os.environ.get("HERMES_PANEL_ENV", CONFIG_DIR / ".env")).expanduser()
-    _ensure_env_file(env_path)
-    if not env_path.is_file():
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        env_path.write_text("", encoding="utf-8")
+    sync = data.get("sync", {}) or {}
+    return Settings(
+        hermes_home=Path(
+            os.environ.get("HERMES_PATH")
+            or data.get("hermes_path")
+            or (Path.home() / ".hermes")
+        ).expanduser(),
+        hermes_panel_db_path=Path(
+            os.environ.get("HERMES_PANEL_DB")
+            or data.get("db_path")
+            or (CONFIG_DIR / "hermes-panel.db")
+        ).expanduser(),
+        log_file_path=Path(
+            os.environ.get("HERMES_PANEL_LOG_FILE")
+            or data.get("log_file")
+            or (CONFIG_DIR / "hermes-panel.log")
+        ).expanduser(),
+        log_level=(
+            os.environ.get("HERMES_PANEL_LOG_LEVEL")
+            or str(data.get("log_level", "INFO"))
+        ).upper(),
+        jwt_secret=(
+            os.environ.get("HERMES_PANEL_JWT_SECRET")
+            or data.get("jwt_secret")
+            or "change-me-in-production-hermes-panel-secret-key"
+        ),
+        default_admin_password=(
+            os.environ.get("HERMES_PANEL_DEFAULT_ADMIN_PASSWORD")
+            or os.environ.get("HERMES_PANEL_DEFAULT_PASSWORD")
+            or data.get("default_admin_password")
+            or "admin"
+        ),
+        sync_enabled=bool(sync.get("enabled", False)),
+        sync_receive_enabled=bool(sync.get("receive_enabled", False)),
+        sync_target_url=sync.get("target_url"),
+        sync_token=sync.get("token"),
+        sync_interval=int(sync.get("interval", 600)),
+        component_versions=data.get("component_versions") or list(_DEFAULT_COMPONENT_VERSIONS),
+    )
 
-    lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    if not lines:
-        lines = [""]
 
-    # Ensure final newline
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
+def update_config_file(updates: dict) -> None:
+    """Merge *updates* into config.yaml and persist.
 
-    seen: set[str] = set()
-    new_lines: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            new_lines.append(line)
-            continue
-        key, _, _ = stripped.partition("=")
-        key = key.strip()
-        if key in updates:
-            seen.add(key)
-            value = updates[key]
-            if value is not None:
-                new_lines.append(f'{key}={value}\n')
-            continue
-        new_lines.append(line)
+    *updates* is a dict matching the top-level config.yaml structure, e.g.::
 
-    for key, value in updates.items():
-        if key not in seen and value is not None:
-            new_lines.append(f'{key}={value}\n')
+        {"sync": {"enabled": True, "target_url": "http://..."}}
+    """
+    data = _load_config_file()
+    _deep_merge(data, updates)
+    _save_config_file(data)
 
-    env_path.write_text("".join(new_lines), encoding="utf-8")
+
+def _deep_merge(base: dict, override: dict) -> None:
+    """Recursively merge *override* into *base* (in-place)."""
+    for key, value in override.items():
+        if (
+            key in base
+            and isinstance(base[key], dict)
+            and isinstance(value, dict)
+        ):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
 
 
 def get_settings() -> Settings:
-    _load_env_file()
-    return Settings()
+    """Build a fresh Settings from config.yaml (with env-var overrides)."""
+    data = _load_config_file()
+    return _build_settings_from_file(data)

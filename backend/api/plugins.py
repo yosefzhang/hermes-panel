@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 
@@ -9,9 +10,11 @@ from fastapi import APIRouter, Depends, Query
 
 from backend.auth.dependencies import ensure_profile_access, get_current_user
 from backend.db.models import User
-from backend.services.cli_runner import get_profile_cmd_prefix
+from backend.services.cli_utils import get_profile_cmd_prefix, get_profile_env
 from backend.services.profile_service import ProfileService
-from backend.services.subprocess_utils import get_profile_env
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
@@ -122,17 +125,28 @@ def _run_plugin_cmd(profile: str, *args: str, timeout: int = 30) -> dict:
     env = get_profile_env(profile, ProfileService().hermes_home)
 
     try:
+        full_cmd = [*cmd, "plugins", *args]
+        logger.info("_run_plugin_cmd: running cmd=%s", full_cmd)
         result = subprocess.run(
-            [*cmd, "plugins", *args],
+            full_cmd,
             capture_output=True,
             text=True,
             timeout=timeout,
             env=env,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+        logger.error("_run_plugin_cmd: cmd=%s failed: %s", full_cmd, exc)
         return {"ok": False, "error": str(exc)}
 
+    logger.info(
+        "_run_plugin_cmd: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+        full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+    )
     if result.returncode != 0:
+        logger.warning(
+            "_run_plugin_cmd: cmd=%s rc=%d stderr=%s",
+            full_cmd, result.returncode, result.stderr[:500],
+        )
         return {"ok": False, "error": result.stderr.strip() or "Plugin command failed"}
     return {"ok": True}
 
@@ -153,20 +167,31 @@ def list_plugins(
     env = get_profile_env(profile, ProfileService().hermes_home)
 
     bundled_manifest = scan_bundled_plugins_manifest(force_refresh=refresh)
+    full_cmd = [*cmd, "plugins", "list", "--json"]
+    logger.info("list_plugins: running cmd=%s", full_cmd)
     try:
         result = subprocess.run(
-            [*cmd, "plugins", "list", "--json"],
+            full_cmd,
             capture_output=True,
             text=True,
             timeout=30,
             env=env,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+        logger.error("list_plugins: cmd=%s failed: %s", full_cmd, exc)
         return {"plugins": [], "error": str(exc)}
     except json.JSONDecodeError as exc:
         return {"plugins": [], "error": f"Failed to parse plugins JSON: {exc}"}
 
+    logger.info(
+        "list_plugins: cmd=%s rc=%d stdout_len=%d stderr_len=%d",
+        full_cmd, result.returncode, len(result.stdout), len(result.stderr),
+    )
     if result.returncode != 0:
+        logger.warning(
+            "list_plugins: cmd=%s rc=%d stderr=%s",
+            full_cmd, result.returncode, result.stderr[:500],
+        )
         return {"plugins": [], "error": result.stderr.strip() or "Failed to list plugins"}
 
     plugins = json.loads(result.stdout)

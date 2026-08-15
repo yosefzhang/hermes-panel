@@ -19,12 +19,11 @@ from pathlib import Path
 from backend.config import Settings
 from backend.db.database import connect
 from backend.db.models import Profile
-from backend.services.cli_runner import find_command
+from backend.services.cli_utils import find_command, get_clean_env
 from backend.services.gateway_service import GatewayService
 from backend.services.host_info_service import get_primary_ip, get_username, make_server_id
 from backend.services.profile_service import ProfileService
 from backend.services.state_reader import StateReader
-from backend.services.subprocess_utils import get_clean_env
 
 logger = logging.getLogger(__name__)
 

@@ -50,10 +50,11 @@ frontend/vite.config.d.ts
 *.sqlite
 *.sqlite3
 
-# 环境变量（包含敏感信息）
+# 配置文件（包含敏感信息）
 .env
 .env.local
 .env.*.local
+config.yaml
 
 # IDE
 .vscode/

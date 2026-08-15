@@ -12,7 +12,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, auth_service: AuthService = Depends(get_auth_service)):
+async def login(
+    payload: LoginRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+):
     user = auth_service.authenticate(payload.username, payload.password)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -23,10 +26,10 @@ def login(payload: LoginRequest, auth_service: AuthService = Depends(get_auth_se
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)):
+async def me(user: User = Depends(get_current_user)):
     return {"user": user.public_dict()}
 
 
 @router.post("/logout")
-def logout():
+async def logout():
     return {"ok": True}

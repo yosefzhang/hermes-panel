@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+import logging
 import os
+import re
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
+from backend.config import Settings, get_settings
 from backend.db.models import User
 
-from .cli_runner import EXTRA_BIN_PATHS, find_command
+from .cli_utils import EXTRA_BIN_PATHS, find_command, get_clean_env
 from .profile_service import ProfileService
-from .subprocess_utils import get_clean_env
+
+
+logger = logging.getLogger(__name__)
 
 
 class HermesInfoService:
-    def __init__(self, hermes_home: Path | None = None):
+    def __init__(self, hermes_home: Path | None = None, settings: Settings | None = None):
         self.profiles = ProfileService(hermes_home)
         self.hermes_home = self.profiles.hermes_home
+        self.settings = settings or get_settings()
 
     def format_size(self, size: int) -> str:
         """格式化文件大小"""
@@ -37,18 +44,24 @@ class HermesInfoService:
         
         try:
             env = get_clean_env()
-            
+
             node_path = self.find_command("node")
             if node_path:
                 node_dir = os.path.dirname(node_path)
                 env["PATH"] = f"{node_dir}:{env.get('PATH', '')}"
-            
+
+            full_cmd = [cmd_path] + args
+            logger.info("get_command_version: running cmd=%s", full_cmd)
             result = subprocess.run(
-                [cmd_path] + args,
+                full_cmd,
                 capture_output=True,
                 text=True,
                 timeout=5,
                 env=env,
+            )
+            logger.info(
+                "get_command_version: cmd=%s rc=%d",
+                full_cmd, result.returncode,
             )
             output = result.stdout.strip() or result.stderr.strip()
             # 提取版本号
@@ -106,45 +119,38 @@ class HermesInfoService:
         return [self.get_profile_info(p) for p in profiles]
 
     def get_system_versions(self) -> dict:
-        """获取系统组件版本"""
-        versions = {}
+        """获取系统组件版本，基于 config.yaml 中 ``component_versions`` 配置。
 
-        # Hermes (优先获取)
-        hermes_version = self.get_command_version("hermes")
-        if hermes_version:
-            # 解析 Hermes 版本，提取版本号和日期
-            # 格式通常是 "v0.17.0 (2026.6.19)" 或类似
-            import re
-            match = re.search(r'(v[\d.]+(?:\s*\([^)]+\))?)', hermes_version)
-            if match:
-                versions["hermes"] = match.group(1).strip()
-            else:
-                versions["hermes"] = hermes_version
+        每个配置项格式::
 
-        # Python
-        import sys
+            name: hermes
+            command: hermes
+            args: ["--version"]
+            # 可选: regex 提取版本号的正则
+            regex: "v[\\d.]+"
+        """
+        versions: dict[str, str] = {}
+
+        # Python 版本始终包含（无需 CLI 调用）
         versions["python"] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
-        # Node.js
-        node_version = self.get_command_version("node")
-        if node_version:
-            versions["node"] = node_version
-
-        # npm
-        npm_version = self.get_command_version("npm")
-        if npm_version:
-            versions["npm"] = npm_version
-
-        # Git - 只提取版本号
-        git_version = self.get_command_version("git")
-        if git_version:
-            # 格式通常是 "git version 2.39.5"
-            import re
-            match = re.search(r'(\d+\.\d+(?:\.\d+)?)', git_version)
-            if match:
-                versions["git"] = match.group(1)
-            else:
-                versions["git"] = git_version
+        for comp in self.settings.component_versions:
+            name = comp.get("name") or comp.get("command")
+            if not name:
+                continue
+            command = comp.get("command", name)
+            args = comp.get("args", ["--version"])
+            version = self.get_command_version(command, args)
+            if version:
+                pattern = comp.get("regex")
+                if pattern:
+                    match = re.search(pattern, version)
+                    if match:
+                        versions[name] = match.group(1) if match.groups() else match.group(0)
+                    else:
+                        versions[name] = version
+                else:
+                    versions[name] = version
 
         return versions
 

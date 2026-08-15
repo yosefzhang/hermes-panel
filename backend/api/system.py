@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisc
 
 from backend.auth.dependencies import get_current_user, require_admin
 from backend.db.models import User
+from backend.services.audit_log import get_audit_logs
 from backend.services.hermes_info_service import HermesInfoService
 from backend.services.hermes_update_service import HermesUpdateService
 from backend.services.system_monitor import SystemMonitor
@@ -20,7 +21,7 @@ def monitor(request: Request) -> SystemMonitor:
 
 
 def hermes_info(request: Request) -> HermesInfoService:
-    return HermesInfoService(request.app.state.settings.hermes_home)
+    return HermesInfoService(request.app.state.settings.hermes_home, settings=request.app.state.settings)
 
 
 @router.get("/health")
@@ -97,3 +98,34 @@ async def ws_system(websocket: WebSocket):
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         return
+
+
+# ── Audit logs (kept under /audit-logs prefix for API stability) ────────────
+
+audit_router = APIRouter(prefix="/audit-logs", tags=["audit"])
+
+
+@audit_router.get("")
+def list_audit_logs(
+    request: Request,
+    limit: int = 100,
+    offset: int = 0,
+    action: str | None = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    _: User = Depends(require_admin),
+):
+    """Return recent audit log entries, newest first.
+
+    Optional query parameters allow filtering by action, target_type or
+    target_id.
+    """
+    logs = get_audit_logs(
+        request.app.state.settings,
+        limit=max(1, min(limit, 1000)),
+        offset=max(0, offset),
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+    )
+    return {"logs": [log.to_dict() for log in logs]}

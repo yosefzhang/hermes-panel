@@ -65,6 +65,8 @@ const versionLabels: Record<string, string> = {
   npm: 'npm',
   git: 'Git',
   hermes: 'Hermes',
+  'lark-cli': 'Lark CLI',
+  'quectel-cli': 'Quectel CLI',
 };
 
 const versionIcons: Record<string, React.ElementType> = {
@@ -73,6 +75,8 @@ const versionIcons: Record<string, React.ElementType> = {
   npm: Box,
   git: Box,
   hermes: Zap,
+  'lark-cli': Box,
+  'quectel-cli': Box,
 };
 
 function formatNumber(n: number): string {
@@ -139,6 +143,11 @@ function MemoryBadge({ available, provider }: { available: boolean | null; provi
 
 function ServerSection({ server }: { server: Server }) {
   const componentEntries = Object.entries(server.components || {});
+  // hermes_version is stored separately from components, merge it back for display
+  const allComponents: [string, string][] = [
+    ...(server.hermes_version ? [['hermes', server.hermes_version] as [string, string]] : []),
+    ...componentEntries,
+  ];
 
   return (
     <Card className="overflow-hidden">
@@ -157,25 +166,40 @@ function ServerSection({ server }: { server: Server }) {
             {server.online ? '在线' : '离线'}
           </Badge>
         </CardTitle>
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span className="font-mono">{server.id}</span>
-          {server.hermes_version && (
-            <span className="inline-flex items-center gap-1">
-              <Zap className="h-3 w-3" />
-              Hermes {server.hermes_version}
-            </span>
-          )}
-          {componentEntries.length > 0 &&
-            componentEntries.map(([key, value]) => {
-              const Icon = versionIcons[key] || Box;
-              return (
-                <span key={key} className="inline-flex items-center gap-1">
-                  <Icon className="h-3 w-3" />
-                  {versionLabels[key] || key}: {value}
-                </span>
-              );
-            })}
-        </div>
+        {allComponents.length > 0 && (
+          <div className="mt-3 -mx-6 overflow-x-auto">
+            <Table className="w-full">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="whitespace-nowrap text-xs w-20">用户</TableHead>
+                  <TableHead className="whitespace-nowrap text-xs w-32">IP</TableHead>
+                  {allComponents.map(([key]) => (
+                    <TableHead key={key} className="whitespace-nowrap text-xs">
+                      {versionLabels[key] || key}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                    {server.username || '—'}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                    {server.ip || '—'}
+                  </TableCell>
+                  {allComponents.map(([key, value]) => {
+                    return (
+                      <TableCell key={key} className="whitespace-nowrap text-xs font-mono">
+                        {value}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
@@ -183,7 +207,6 @@ function ServerSection({ server }: { server: Server }) {
             <TableHeader>
               <TableRow>
                 <TableHead className="whitespace-nowrap">Profile</TableHead>
-                <TableHead className="whitespace-nowrap">主机</TableHead>
                 <TableHead className="whitespace-nowrap">路径</TableHead>
                 <TableHead className="whitespace-nowrap">配置版本</TableHead>
                 <TableHead className="whitespace-nowrap">记忆体</TableHead>
@@ -200,7 +223,6 @@ function ServerSection({ server }: { server: Server }) {
               {server.profiles.map((stat) => (
                 <TableRow key={`${stat.server_id}-${stat.profile_name}`}>
                   <TableCell className="font-medium whitespace-nowrap">{stat.profile_name}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{stat.host ?? '—'}</TableCell>
                   <TableCell className="text-xs text-muted-foreground break-all" title={stat.path ?? ''}>
                     {stat.path ?? '—'}
                   </TableCell>

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from backend.auth.dependencies import ensure_profile_access, get_current_user
@@ -29,8 +29,24 @@ class ProfileFile(BaseModel):
     content: str = ""
 
 
+class ProfileFileUpdate(BaseModel):
+    name: str
+    content: str
+
+
 def profile_service(request: Request) -> ProfileService:
     return ProfileService()
+
+
+_EDITABLE_FILES = {"SOUL.md", "soul.md", "USER.md", "MEMORY.md"}
+
+
+def _file_path(profile_root: Path, name: str) -> Path | None:
+    if name in ("SOUL.md", "soul.md"):
+        return _resolve_soul_path(profile_root)
+    if name in ("USER.md", "MEMORY.md"):
+        return profile_root / "memories" / name
+    return None
 
 
 def _mask_value(value: str) -> str:
@@ -63,16 +79,26 @@ def _mask_env_content(content: str) -> str:
     return "\n".join(out) + trailing_newline
 
 
+def _resolve_soul_path(profile_root: Path) -> Path:
+    """Return the path to the SOUL file, preferring the canonical casing."""
+    for name in ("SOUL.md", "soul.md"):
+        path = profile_root / name
+        if path.exists():
+            return path
+    return profile_root / "SOUL.md"
+
+
 def _build_file_list(profile_root: Path) -> list[ProfileFile]:
     """Return the canonical set of files for *profile_root*.
 
     `.env` is flagged as `masked` and its value is scrubbed before
     being returned to the client.
     """
+    soul_path = _resolve_soul_path(profile_root)
     candidates: list[tuple[str, Path, bool]] = [
         ("config.yaml", profile_root / "config.yaml", False),
         (".env", profile_root / ".env", True),
-        ("SOUL.md", profile_root / "SOUL.md", False),
+        (soul_path.name, soul_path, False),
         ("USER.md", profile_root / "memories" / "USER.md", False),
         ("MEMORY.md", profile_root / "memories" / "MEMORY.md", False),
     ]
@@ -101,3 +127,22 @@ def get_profile_files(
     ensure_profile_access(user, profile)
     root = profiles.profile_root(profile)
     return {"files": _build_file_list(root)}
+
+
+@router.put("")
+def update_profile_file(
+    payload: ProfileFileUpdate,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    profiles: ProfileService = Depends(profile_service),
+):
+    ensure_profile_access(user, profile)
+    if payload.name not in _EDITABLE_FILES:
+        raise HTTPException(status_code=400, detail=f"File '{payload.name}' is not editable")
+    root = profiles.profile_root(profile)
+    path = _file_path(root, payload.name)
+    if path is None:
+        raise HTTPException(status_code=400, detail=f"Unknown file '{payload.name}'")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload.content, encoding="utf-8")
+    return {"ok": True, "name": payload.name}

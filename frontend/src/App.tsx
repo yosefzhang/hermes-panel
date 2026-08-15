@@ -15,6 +15,7 @@ const PluginsManager = lazy(() => import('./pages/PluginsManager'));
 const ModelsConfig = lazy(() => import('./pages/ModelsConfig'));
 const ChannelsConfig = lazy(() => import('./pages/ChannelsConfig'));
 const MemoryConfig = lazy(() => import('./pages/MemoryConfig'));
+const SoulPage = lazy(() => import('./pages/SoulPage'));
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const location = useLocation();
@@ -64,7 +65,7 @@ function ProfileRouteWrapper() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <ErrorBoundary>
         <Suspense fallback={<div className="centered"><Spin /></div>}>
           <Routes>
@@ -80,6 +81,7 @@ export default function App() {
                 <Route path="skills" element={<SkillsManager />} />
                 <Route path="plugins" element={<PluginsManager />} />
                 <Route path="memory" element={<MemoryConfig />} />
+                <Route path="soul" element={<SoulPage />} />
                 <Route index element={<Navigate to="models" replace />} />
               </Route>
             </Route>

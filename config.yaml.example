@@ -1,0 +1,69 @@
+# Hermes Panel Configuration
+#
+# Place this file at ~/.config/hermes-panel/config.yaml (loaded automatically on startup).
+# Override the path with HERMES_PANEL_CONFIG if needed.
+# Real environment variables always take priority over this file for keys that
+# support env-var overrides (e.g. HERMES_PANEL_DB, HERMES_PANEL_JWT_SECRET, etc.).
+
+# Path to Hermes Agent home directory (contains state.db, config.yaml, etc.)
+hermes_path: ~/.hermes
+
+# SQLite database path for hermes-panel's own data.
+# All panel tables (users, system metrics, profile statistics and host info)
+# live in this single database file.
+# Default: ~/.config/hermes-panel/hermes-panel.db
+db_path: ~/.config/hermes-panel/hermes-panel.db
+
+# Log file location (rotating, max 5 files x 5 MB each).
+# Default: ~/.config/hermes-panel/hermes-panel.log
+log_file: ~/.config/hermes-panel/hermes-panel.log
+log_level: INFO
+
+# JWT secret for authentication tokens (CHANGE THIS in production!)
+jwt_secret: changeme
+
+# Default admin password (change this in production!)
+default_admin_password: changeme
+
+# Components whose versions are queried via CLI for the dashboard.
+# Each entry:
+#   name:    Display key in the versions dict (default: same as command)
+#   command: CLI binary to execute
+#   args:    Arguments passed to the command (default: ["--version"])
+#   regex:   Optional regex to extract a version substring from the output.
+#            If the regex has a capture group, group(1) is used; otherwise
+#            group(0) is used.  When omitted, the first non-empty line of
+#            output is used as-is.
+component_versions:
+  - name: hermes
+    command: hermes
+    args: ["--version"]
+    regex: 'v[\d.]+(?:\s*\([^)]+\))?'
+  - name: node
+    command: node
+    args: ["--version"]
+  - name: npm
+    command: npm
+    args: ["--version"]
+  - name: git
+    command: git
+    args: ["--version"]
+    regex: '(\d+\.\d+(?:\.\d+)?)'
+  - name: lark-cli
+    command: lark-cli
+    args: ["--version"]
+    regex: '(\d+\.\d+(?:\.\d+)?)'
+  - name: quectel-cli
+    command: quectel-cli
+    args: ["--version"]
+    regex: 'v?(\d+\.\d+(?:\.\d+)?)'
+
+# Data sync to another hermes-panel instance.
+# When enabled, local profile_stats and host_info tables are periodically
+# POSTed to the target panel's /api/v1/sync endpoint.
+sync:
+  enabled: false
+  receive_enabled: false
+  # target_url: http://10.0.0.10:8660
+  # token: replace-with-shared-token
+  interval: 600
