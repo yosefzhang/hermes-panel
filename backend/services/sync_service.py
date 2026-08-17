@@ -148,9 +148,12 @@ class SyncService:
         self.db_path = settings.hermes_panel_db_path
         self._http = urllib3.PoolManager(timeout=urllib3.Timeout(connect=5, read=30))
 
-    def _target_url(self, path: str) -> str:
-        base = (self.settings.sync_target_url or "").rstrip("/")
-        return f"{base}{path}"
+    def _target_url(self) -> str:
+        """Return the configured sync endpoint, with legacy base URL support."""
+        target = (self.settings.sync_target_url or "").rstrip("/")
+        if target.endswith("/api/v1/sync"):
+            return f"{target}/"
+        return f"{target}/api/v1/sync/"
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -164,7 +167,7 @@ class SyncService:
             return {"ok": False, "message": "sync not configured"}
 
         payload = self._collect_payload()
-        url = self._target_url("/api/v1/sync/")
+        url = self._target_url()
         logger.info(
             "Sync push starting: url=%s profiles=%d hosts=%d",
             url, len(payload.get("profiles", [])), len(payload.get("hosts", [])),
@@ -188,9 +191,12 @@ class SyncService:
             return {"ok": False, "message": "network error"}
 
     def verify_target(self, target_url: str, token: str | None = None) -> dict:
-        """Check whether a target panel is reachable and returns a valid health response."""
-        base = target_url.rstrip("/")
-        url = f"{base}/api/v1/system/health"
+        """Check reachability and validate the target's sync token."""
+        endpoint = target_url.rstrip("/")
+        if endpoint.endswith("/api/v1/sync"):
+            url = f"{endpoint}/auth-check"
+        else:
+            url = f"{endpoint}/api/v1/sync/auth-check"
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -201,11 +207,11 @@ class SyncService:
             if status == 200:
                 try:
                     data = json.loads(body)
-                    if data.get("status") == "ok":
+                    if data.get("ok") is True:
                         return {"ok": True, "status": status}
                 except json.JSONDecodeError:
                     pass
-                return {"ok": False, "status": status, "message": "invalid health response"}
+                return {"ok": False, "status": status, "message": "invalid sync auth response"}
             return {"ok": False, "status": status, "message": body}
         except Exception as exc:
             logger.exception("Sync verify to %s failed", url)

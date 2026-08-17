@@ -69,7 +69,7 @@ component_versions:
 sync:
   enabled: false
   receive_enabled: false
-  # target_url: http://10.0.0.10:8660
+  # target_url: http://127.0.0.1:8650/api/v1/sync/
   # send_token: presented to the target panel as Bearer on push
   # receive_token: verified on /sync/ inbound
   # interval: 600

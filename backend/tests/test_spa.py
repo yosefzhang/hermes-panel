@@ -20,3 +20,4 @@ def test_spa_frontend_routes_fall_back_to_index(tmp_path: Path):
 
     assert response.status_code == 200
     assert "Hermes Panel" in response.text
+    assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"

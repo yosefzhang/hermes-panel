@@ -45,8 +45,7 @@ function SyncSettingsSection() {
   const [enabled, setEnabled] = useState(false);
   const [receiveEnabled, setReceiveEnabled] = useState(false);
   const [receiveRuntimeEnabled, setReceiveRuntimeEnabled] = useState(false);
-  const [targetHost, setTargetHost] = useState('');
-  const [targetPort, setTargetPort] = useState('8650');
+  const [targetUrl, setTargetUrl] = useState('');
   const [sendToken, setSendToken] = useState('');
   const [receiveToken, setReceiveToken] = useState('');
   const [interval, setInterval] = useState(60);
@@ -109,9 +108,7 @@ function SyncSettingsSection() {
     if (data) {
       setEnabled(data.enabled);
       setReceiveEnabled(data.receive_enabled);
-      const parsed = parseTargetUrl(data.target_url || '');
-      setTargetHost(parsed.host);
-      setTargetPort(parsed.port);
+      setTargetUrl(normalizeSyncEndpoint(data.target_url || ''));
       setSendToken(data.send_token || '');
       setReceiveToken(data.receive_token || '');
       setInterval(data.interval);
@@ -121,26 +118,20 @@ function SyncSettingsSection() {
     }
   }, [data, fetchStatus]);
 
-  const targetUrl = buildTargetUrl(targetHost, targetPort);
-
   const handleSave = async (updates: {
     enabled?: boolean;
     receiveEnabled?: boolean;
-    targetHost?: string;
-    targetPort?: string;
+    targetUrl?: string;
     sendToken?: string;
     receiveToken?: string;
     interval?: number;
   }) => {
     const nextEnabled = updates.enabled ?? enabled;
     const nextReceiveEnabled = updates.receiveEnabled ?? receiveEnabled;
-    const nextHost = updates.targetHost ?? targetHost;
-    const nextPort = updates.targetPort ?? targetPort;
+    const nextTargetUrl = updates.targetUrl ?? targetUrl;
     const nextSendToken = updates.sendToken ?? sendToken;
     const nextReceiveToken = updates.receiveToken ?? receiveToken;
     const nextInterval = updates.interval ?? interval;
-    const nextTargetUrl = buildTargetUrl(nextHost, nextPort);
-
     setSaving(true);
     try {
       await api.updateSyncSettings({
@@ -153,8 +144,7 @@ function SyncSettingsSection() {
       });
       setEnabled(nextEnabled);
       setReceiveEnabled(nextReceiveEnabled);
-      setTargetHost(nextHost);
-      setTargetPort(nextPort);
+      setTargetUrl(nextTargetUrl);
       setSendToken(nextSendToken);
       if (nextReceiveToken !== undefined) setReceiveToken(nextReceiveToken);
       setInterval(nextInterval);
@@ -171,7 +161,7 @@ function SyncSettingsSection() {
 
   const handleVerify = async () => {
     if (!targetUrl) {
-      toast({ variant: 'destructive', title: '错误', description: '请先配置目标地址和端口' });
+      toast({ variant: 'destructive', title: '错误', description: '请先配置远端同步端点' });
       return;
     }
     setVerifying(true);
@@ -284,7 +274,7 @@ function SyncSettingsSection() {
                 <TableBody>
                   <TableRow>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
-                      {targetUrl ? `${targetUrl}/api/v1/sync/` : '未配置'}
+                      {targetUrl || '未配置'}
                     </TableCell>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[200px]">
                       {sendToken || '未配置'}
@@ -320,8 +310,7 @@ function SyncSettingsSection() {
                 <DialogDescription>配置目标面板地址、Token 和同步间隔</DialogDescription>
               </DialogHeader>
               <SendSyncDialogForm
-                initialHost={targetHost}
-                initialPort={targetPort}
+                initialUrl={targetUrl}
                 initialToken={sendToken}
                 initialInterval={interval}
                 onSave={handleSave}
@@ -503,8 +492,7 @@ python3 push_sync.py --url ${url || '<ENDPOINT_URL>'} \\
 }
 
 function SendSyncDialogForm({
-  initialHost,
-  initialPort,
+  initialUrl,
   initialToken,
   initialInterval,
   onSave,
@@ -512,14 +500,12 @@ function SendSyncDialogForm({
   onVerify,
   verifying,
 }: {
-  initialHost: string;
-  initialPort: string;
+  initialUrl: string;
   initialToken: string;
   initialInterval: number;
   onSave: (updates: {
     enabled: boolean;
-    targetHost: string;
-    targetPort: string;
+    targetUrl: string;
     token: string;
     interval: number;
   }) => void;
@@ -527,32 +513,20 @@ function SendSyncDialogForm({
   onVerify: () => void;
   verifying: boolean;
 }) {
-  const [host, setHost] = useState(initialHost);
-  const [port, setPort] = useState(initialPort);
+  const [url, setUrl] = useState(initialUrl);
   const [token, setToken] = useState(initialToken);
   const [interval, setInterval] = useState(initialInterval);
 
   return (
     <div className="grid gap-4 py-4">
-      <div className="grid grid-cols-[1fr_auto] gap-3">
-        <div className="grid gap-2">
-          <Label htmlFor="sync-target-host">目标面板地址</Label>
-          <Input
-            id="sync-target-host"
-            placeholder="http://10.0.0.10"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-          />
-        </div>
-        <div className="grid gap-2 w-24">
-          <Label htmlFor="sync-target-port">端口</Label>
-          <Input
-            id="sync-target-port"
-            placeholder="8650"
-            value={port}
-            onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ''))}
-          />
-        </div>
+      <div className="grid gap-2">
+        <Label htmlFor="sync-target-url">远端同步端点</Label>
+        <Input
+          id="sync-target-url"
+          placeholder="http://127.0.0.1:8650/api/v1/sync/"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
       </div>
       <div className="grid gap-2">
         <Label htmlFor="sync-token">发送 Token（提交给目标面板）</Label>
@@ -578,7 +552,7 @@ function SendSyncDialogForm({
         <Button variant="outline" onClick={onVerify} disabled={verifying || saving}>
           {verifying ? '验证中...' : '验证连接'}
         </Button>
-        <Button onClick={() => onSave({ enabled: true, targetHost: host, targetPort: port, token, interval })} disabled={saving}>
+        <Button onClick={() => onSave({ enabled: true, targetUrl: url, token, interval })} disabled={saving}>
           {saving ? '保存中...' : '保存配置'}
         </Button>
       </DialogFooter>
@@ -600,36 +574,6 @@ function StatusBadge({ status, text }: { status: 'idle' | 'ok' | 'error' | 'disa
   return <span className={`${base} bg-muted text-muted-foreground`}>{text}</span>;
 }
 
-function parseTargetUrl(url: string): { host: string; port: string } {
-  if (!url) return { host: '', port: '8650' };
-  try {
-    const parsed = new URL(url);
-    return {
-      host: `${parsed.protocol}//${parsed.hostname}`,
-      port: parsed.port || (parsed.protocol === 'https:' ? '443' : '80'),
-    };
-  } catch {
-    try {
-      const parsed = new URL(`http://${url}`);
-      return {
-        host: `http://${parsed.hostname}`,
-        port: parsed.port || '8650',
-      };
-    } catch {
-      return { host: url, port: '8650' };
-    }
-  }
-}
-
-function buildTargetUrl(host: string, port: string): string {
-  const h = host.trim().replace(/\/$/, '');
-  const p = port.trim();
-  if (!h) return '';
-  const normalized = /^https?:\/\//i.test(h) ? h : `http://${h}`;
-  if (!p) return normalized;
-  return `${normalized}:${p}`;
-}
-
 function formatUptime(seconds: number): string {
   if (seconds <= 0) return '0 秒';
   const hours = Math.floor(seconds / 3600);
@@ -642,6 +586,12 @@ function formatUptime(seconds: number): string {
     return `${minutes} 分 ${secs} 秒`;
   }
   return `${secs} 秒`;
+}
+
+function normalizeSyncEndpoint(value: string): string {
+  const target = value.trim().replace(/\/+$/, '');
+  if (!target) return '';
+  return target.endsWith('/api/v1/sync') ? `${target}/` : `${target}/api/v1/sync/`;
 }
 
 function UserSettingsSection() {

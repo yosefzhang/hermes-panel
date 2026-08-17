@@ -248,7 +248,17 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
             requested_path = dist_path / full_path
             if full_path and requested_path.is_file():
                 return FileResponse(requested_path)
-            return FileResponse(dist_path / "index.html")
+            # The entrypoint contains hashed asset names and must be fetched
+            # again after each production build; otherwise browsers can keep
+            # an old index that references deleted chunks.
+            return FileResponse(
+                dist_path / "index.html",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
 
     return app
 

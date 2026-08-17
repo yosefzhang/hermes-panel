@@ -181,6 +181,26 @@ async def receive_sync(request: Request):
     return result
 
 
+@router.get("/auth-check")
+async def sync_auth_check(request: Request):
+    """Validate a sender's sync token without accepting or storing a payload."""
+    settings: Settings = request.app.state.settings
+    if not settings.sync_receive_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="接收同步未启用",
+        )
+    expected_token = settings.sync_receive_token
+    auth_header = request.headers.get("Authorization", "")
+    received_token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+    if not expected_token or received_token != expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的同步凭证",
+        )
+    return {"ok": True}
+
+
 @router.post("/verify")
 async def verify_target(
     request: Request,

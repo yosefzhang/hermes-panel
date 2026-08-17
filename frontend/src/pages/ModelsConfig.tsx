@@ -2511,7 +2511,7 @@ function MoATab({
 export default function ModelsConfig() {
   const { toast } = useToast();
   const { activeProfile } = useConfigStore();
-  const [activeTab, setActiveTab] = useState('providers');
+  const [activeTab, setActiveTab] = useState('main');
 
   const fetchModels = useCallback(
     () => apiClient.get<ModelsData>('/models', { params: { profile: activeProfile } }).then((res) => res.data),
@@ -2543,8 +2543,8 @@ export default function ModelsConfig() {
 
       <div className="flex gap-2 border-b">
         {[
-          { key: 'providers', label: '供应商' },
           { key: 'main', label: '主模型' },
+          { key: 'providers', label: '供应商' },
           { key: 'aux', label: '辅助模型' },
           { key: 'fallback', label: '回退模型' },
           { key: 'moa', label: '多智能体' },

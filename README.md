@@ -254,7 +254,7 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 |--------|------|
 | `sync.enabled` | 本机是否定时把本地数据推送到目标面板 |
 | `sync.receive_enabled` | 本机是否接收其它面板推送的数据 |
-| `sync.target_url` | 接收数据的目标面板地址，例如 `http://192.168.1.10:8650` |
+| `sync.target_url` | 数据同步远端端点，例如 `http://192.168.1.10:8650/api/v1/sync/` |
 | `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） |
 | `sync.receive_token` | 接收端 `/sync/` 校验的入站凭证 |
 | `sync.token` | 兼容旧配置：单一共享 token；未分别配置 send/receive 时回退到此键 |
