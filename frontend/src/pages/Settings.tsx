@@ -47,13 +47,11 @@ function SyncSettingsSection() {
   const [receiveRuntimeEnabled, setReceiveRuntimeEnabled] = useState(false);
   const [targetUrl, setTargetUrl] = useState('');
   const [sendToken, setSendToken] = useState('');
+  const [sendEndpoints, setSendEndpoints] = useState<Array<{ endpoint: string; token: string }>>([]);
   const [receiveToken, setReceiveToken] = useState('');
   const [interval, setInterval] = useState(60);
   const [saving, setSaving] = useState(false);
-  const [verifying, setVerifying] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
-  const [sendStatus, setSendStatus] = useState<'idle' | 'ok' | 'error'>('idle');
-  const [sendStatusText, setSendStatusText] = useState('未验证');
   const [statusLoading, setStatusLoading] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<{
     enabled: boolean;
@@ -110,10 +108,9 @@ function SyncSettingsSection() {
       setReceiveEnabled(data.receive_enabled);
       setTargetUrl(normalizeSyncEndpoint(data.target_url || ''));
       setSendToken(data.send_token || '');
+      setSendEndpoints(data.send_endpoints?.length ? data.send_endpoints : (data.target_url ? [{ endpoint: data.target_url, token: data.send_token || '' }] : []));
       setReceiveToken(data.receive_token || '');
       setInterval(data.interval);
-      setSendStatus('idle');
-      setSendStatusText('未验证');
       fetchStatus();
     }
   }, [data, fetchStatus]);
@@ -123,6 +120,7 @@ function SyncSettingsSection() {
     receiveEnabled?: boolean;
     targetUrl?: string;
     sendToken?: string;
+    sendEndpoints?: Array<{ endpoint: string; token: string }>;
     receiveToken?: string;
     interval?: number;
   }) => {
@@ -130,58 +128,38 @@ function SyncSettingsSection() {
     const nextReceiveEnabled = updates.receiveEnabled ?? receiveEnabled;
     const nextTargetUrl = updates.targetUrl ?? targetUrl;
     const nextSendToken = updates.sendToken ?? sendToken;
+    const nextSendEndpoints = updates.sendEndpoints ?? sendEndpoints;
     const nextReceiveToken = updates.receiveToken ?? receiveToken;
     const nextInterval = updates.interval ?? interval;
     setSaving(true);
     try {
-      await api.updateSyncSettings({
+      const result = await api.updateSyncSettings({
         enabled: nextEnabled,
         receive_enabled: nextReceiveEnabled,
         target_url: nextTargetUrl || null,
         send_token: nextSendToken || null,
         receive_token: nextReceiveToken || null,
+        send_endpoints: nextSendEndpoints,
         interval: nextInterval,
       });
       setEnabled(nextEnabled);
       setReceiveEnabled(nextReceiveEnabled);
       setTargetUrl(nextTargetUrl);
       setSendToken(nextSendToken);
+      setSendEndpoints(nextSendEndpoints);
       if (nextReceiveToken !== undefined) setReceiveToken(nextReceiveToken);
       setInterval(nextInterval);
       setSendOpen(false);
-      toast({ title: '成功', description: '同步配置已保存' });
+      toast({
+        title: '成功',
+        description: result.push?.ok ? '配置已保存，并已完成一次同步' : '配置已保存，但首次同步失败',
+      });
       // Refresh runtime status after saving to reflect actual process state
       fetchStatus();
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '保存失败' });
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleVerify = async (urlToVerify: string, tokenToVerify: string) => {
-    if (!urlToVerify) {
-      setSendStatus('error');
-      setSendStatusText('请先配置远端同步端点');
-      toast({ variant: 'destructive', title: '错误', description: '请先配置远端同步端点' });
-      return;
-    }
-    setVerifying(true);
-    try {
-      await api.verifySyncTarget(urlToVerify, tokenToVerify);
-      setSendStatus('ok');
-      setSendStatusText('连接正常');
-      toast({ title: '验证成功', description: '目标面板可正常连接' });
-    } catch (err: unknown) {
-      setSendStatus('error');
-      const message =
-        (err && typeof err === 'object' && 'response' in err
-          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-          : undefined) || '目标面板无法连接';
-      setSendStatusText(`连接失败：${message}`);
-      toast({ variant: 'destructive', title: '验证失败', description: message });
-    } finally {
-      setVerifying(false);
     }
   };
 
@@ -276,10 +254,10 @@ function SyncSettingsSection() {
                 <TableBody>
                   <TableRow>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
-                      {targetUrl || '未配置'}
+                      {sendEndpoints.map((item) => item.endpoint).filter(Boolean).join('、') || targetUrl || '未配置'}
                     </TableCell>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[200px]">
-                      {sendToken || '未配置'}
+                      {sendEndpoints.length ? `${sendEndpoints.length} 个端点` : (sendToken || '未配置')}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{interval} 秒</TableCell>
                     <TableCell className="text-right whitespace-nowrap">
@@ -314,13 +292,10 @@ function SyncSettingsSection() {
               <SendSyncDialogForm
                 initialUrl={targetUrl}
                 initialToken={sendToken}
+                initialEndpoints={sendEndpoints}
                 initialInterval={interval}
                 onSave={handleSave}
                 saving={saving}
-                onVerify={handleVerify}
-                verifying={verifying}
-                verificationStatus={sendStatus}
-                verificationStatusText={sendStatusText}
               />
             </DialogContent>
           </Dialog>
@@ -498,53 +473,61 @@ python3 push_sync.py --url ${url || '<ENDPOINT_URL>'} \\
 function SendSyncDialogForm({
   initialUrl,
   initialToken,
+  initialEndpoints,
   initialInterval,
   onSave,
   saving,
-  onVerify,
-  verifying,
-  verificationStatus,
-  verificationStatusText,
 }: {
   initialUrl: string;
   initialToken: string;
+  initialEndpoints: Array<{ endpoint: string; token: string }>;
   initialInterval: number;
   onSave: (updates: {
     enabled: boolean;
     targetUrl: string;
     sendToken: string;
+    sendEndpoints: Array<{ endpoint: string; token: string }>;
     interval: number;
   }) => void;
   saving: boolean;
-  onVerify: (url: string, token: string) => void;
-  verifying: boolean;
-  verificationStatus: 'idle' | 'ok' | 'error';
-  verificationStatusText: string;
 }) {
-  const [url, setUrl] = useState(initialUrl);
-  const [token, setToken] = useState(initialToken);
+  const [endpoints, setEndpoints] = useState<Array<{ endpoint: string; token: string }>>(
+    initialEndpoints.length ? initialEndpoints : (initialUrl ? [{ endpoint: initialUrl, token: initialToken }] : [{ endpoint: '', token: '' }]),
+  );
   const [interval, setInterval] = useState(initialInterval);
+
+  const updateEndpoint = (index: number, key: 'endpoint' | 'token', value: string) => {
+    setEndpoints((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
+  };
 
   return (
     <div className="grid gap-4 py-4">
-      <div className="grid gap-2">
-        <Label htmlFor="sync-target-url">远端同步端点</Label>
-        <Input
-          id="sync-target-url"
-          placeholder="http://127.0.0.1:8650/api/v1/sync/"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-        />
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="sync-token">发送 Token（提交给目标面板）</Label>
-        <Input
-          id="sync-token"
-          type="password"
-          placeholder="与目标面板的接收 Token 一致"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-        />
+      <div className="grid gap-3">
+        <Label>发送端点</Label>
+        {endpoints.map((item, index) => (
+          <div key={index} className="grid gap-2 rounded-md border p-3">
+            <Input
+              placeholder="https://panel.example.com/api/v1/sync/"
+              value={item.endpoint}
+              onChange={(e) => updateEndpoint(index, 'endpoint', e.target.value)}
+            />
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                placeholder="该端点的接收 Token"
+                value={item.token}
+                onChange={(e) => updateEndpoint(index, 'token', e.target.value)}
+              />
+              <Button type="button" variant="outline" onClick={() => setEndpoints((current) => current.filter((_, itemIndex) => itemIndex !== index))} disabled={endpoints.length === 1}>
+                删除
+              </Button>
+            </div>
+          </div>
+        ))}
+        <Button type="button" variant="outline" onClick={() => setEndpoints((current) => [...current, { endpoint: '', token: '' }])}>
+          <Plus className="mr-2 h-4 w-4" />
+          添加端点
+        </Button>
       </div>
       <div className="grid gap-2">
         <Label htmlFor="sync-interval">同步间隔（秒）</Label>
@@ -557,18 +540,10 @@ function SendSyncDialogForm({
         />
       </div>
       <DialogFooter>
-        <Button variant="outline" onClick={() => onVerify(url, token)} disabled={verifying || saving}>
-          {verifying ? '验证中...' : '验证连接'}
-        </Button>
-        <Button onClick={() => onSave({ enabled: true, targetUrl: url, sendToken: token, interval })} disabled={saving}>
+        <Button onClick={() => onSave({ enabled: true, targetUrl: endpoints[0]?.endpoint || '', sendToken: endpoints[0]?.token || '', sendEndpoints: endpoints.filter((item) => item.endpoint.trim()) , interval })} disabled={saving}>
           {saving ? '保存中...' : '保存配置'}
         </Button>
       </DialogFooter>
-      {verificationStatus !== 'idle' && (
-        <p className={verificationStatus === 'error' ? 'text-sm text-destructive' : 'text-sm text-green-600'}>
-          {verificationStatusText}
-        </p>
-      )}
     </div>
   );
 }

@@ -127,6 +127,7 @@ class Settings(BaseModel):
     sync_target_url: str | None = None
     # Outbound and inbound sync credentials are configured independently.
     sync_send_token: str | None = None
+    sync_send_endpoints: list[dict] = Field(default_factory=list)
     sync_receive_token: str | None = None
     sync_interval: int = 600
 
@@ -185,6 +186,7 @@ def _build_settings_from_file(data: dict) -> Settings:
         sync_receive_enabled=bool(receive_sync.get("enabled", False)),
         sync_target_url=send_sync.get("endpoint"),
         sync_send_token=send_sync.get("token"),
+        sync_send_endpoints=list(send_sync.get("endpoints") or []),
         sync_receive_token=receive_sync.get("token"),
         sync_interval=int(send_sync.get("interval", 600)),
         component_versions=data.get("component_versions") or list(_DEFAULT_COMPONENT_VERSIONS),

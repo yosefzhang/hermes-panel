@@ -174,6 +174,7 @@ export const api = {
       send_token: string | null;
       receive_token: string | null;
       interval: number;
+      send_endpoints: Array<{ endpoint: string; token: string }>;
     }>('/sync/settings');
     return data;
   },
@@ -184,15 +185,9 @@ export const api = {
     send_token?: string | null;
     receive_token?: string | null;
     interval?: number;
+    send_endpoints?: Array<{ endpoint: string; token: string }>;
   }) => {
-    const { data } = await apiClient.put<{ ok: boolean }>('/sync/settings', settings);
-    return data;
-  },
-  verifySyncTarget: async (targetUrl: string, token?: string | null) => {
-    const { data } = await apiClient.post<{ ok: boolean; status?: number }>('/sync/verify', {
-      target_url: targetUrl,
-      token: token || null,
-    });
+    const { data } = await apiClient.put<{ ok: boolean; push?: { ok: boolean; message?: string; results?: unknown[] } }>('/sync/settings', settings);
     return data;
   },
   triggerSyncPush: async () => {

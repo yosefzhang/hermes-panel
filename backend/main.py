@@ -327,7 +327,9 @@ async def _run_sync_loop(service: SyncService) -> None:
         except asyncio.CancelledError:
             break
 
-        if not service.settings.sync_enabled or not service.settings.sync_target_url:
+        if not service.settings.sync_enabled or not (
+            service.settings.sync_send_endpoints or service.settings.sync_target_url
+        ):
             continue
 
         try:

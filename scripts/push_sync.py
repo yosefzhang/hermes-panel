@@ -362,7 +362,8 @@ def main() -> int:
         description="将本机 Hermes 数据推送到 hermes-panel 接收端点（/api/v1/sync/），独立运行，仅依赖 Python 标准库。",
     )
     parser.add_argument("--config", default=None, help="JSON 配置文件路径，命令行参数优先")
-    parser.add_argument("--url", default=None, help="接收端点完整地址，例如 http://10.0.0.10:8650/api/v1/sync/")
+    parser.add_argument("--url", default=None, help="单个接收端点完整地址")
+    parser.add_argument("--urls", default=None, help="多个接收端点，逗号分隔")
     parser.add_argument("--token", default=None, help="接收 Token（Authorization: Bearer）")
     parser.add_argument("--payload", default=None, help="推送预先准备好的 JSON payload 文件（跳过本机采集）")
     parser.add_argument("--hermes-home", default=None, help="Hermes 主目录（默认 ~/.hermes）")
@@ -389,6 +390,11 @@ def main() -> int:
         return getattr(args, name) if getattr(args, name) is not None else config.get(name, default)
 
     url = value("url")
+    urls = value("urls")
+    if isinstance(urls, str):
+        urls = [item.strip() for item in urls.split(",") if item.strip()]
+    elif not urls:
+        urls = [url] if url else []
     token = value("token")
     timeout = int(value("timeout", 30))
     hermes_home = Path(value("hermes_home", str(Path.home() / ".hermes"))).expanduser()
@@ -410,8 +416,8 @@ def main() -> int:
         ]
     collect_components = not args.no_components and value("collect_components", True)
 
-    if not url:
-        parser.error("必须提供 --url，或在 JSON 配置中设置 url")
+    if not urls:
+        parser.error("必须提供 --url/--urls，或在 JSON 配置中设置 url/urls")
 
     if args.payload:
         try:
@@ -443,14 +449,13 @@ def main() -> int:
     if args.verbose:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    result = push_payload(url, token, payload, timeout)
-    if result.get("ok"):
-        print(f"[成功] 推送成功，状态码 {result.get('status')}")
+    results = [push_payload(target, token, payload, timeout) for target in urls]
+    if all(result.get("ok") for result in results):
+        print(f"[成功] {len(results)} 个端点均推送成功")
         return 0
-    print(
-        f"[失败] 推送失败，状态码 {result.get('status')}: {result.get('message') or result.get('data') or 'unknown'}",
-        file=sys.stderr,
-    )
+    for target, result in zip(urls, results):
+        if not result.get("ok"):
+            print(f"[失败] {target}: {result.get('status')}: {result.get('message') or result.get('data') or 'unknown'}", file=sys.stderr)
     return 1
 
 

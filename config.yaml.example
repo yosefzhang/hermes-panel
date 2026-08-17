@@ -70,8 +70,9 @@ component_versions:
 sync:
   send:
     enabled: false
-    # endpoint: http://127.0.0.1:8650/api/v1/sync/
-    # token: presented to the target panel as Bearer on push
+    # endpoints:
+    #   - endpoint: http://127.0.0.1:8650/api/v1/sync/
+    #     token: presented to the target panel as Bearer on push
     interval: 600
   receive:
     enabled: false

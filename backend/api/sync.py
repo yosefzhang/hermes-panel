@@ -31,6 +31,7 @@ class SyncSettingsOut(BaseModel):
     send_token: str | None
     receive_token: str | None
     interval: int
+    send_endpoints: list[dict]
 
 
 class SyncSettingsIn(BaseModel):
@@ -40,11 +41,7 @@ class SyncSettingsIn(BaseModel):
     send_token: str | None = Field(default=None)
     receive_token: str | None = Field(default=None)
     interval: int = Field(default=60, ge=10)
-
-
-class VerifyTargetIn(BaseModel):
-    target_url: str
-    token: str | None = Field(default=None)
+    send_endpoints: list[dict] = Field(default_factory=list)
 
 
 @router.get("/settings", response_model=SyncSettingsOut)
@@ -58,6 +55,7 @@ async def get_sync_settings(request: Request, user: User = Depends(require_admin
         send_token=settings.sync_send_token,
         receive_token=settings.sync_receive_token,
         interval=settings.sync_interval,
+        send_endpoints=settings.sync_send_endpoints,
     )
 
 
@@ -76,6 +74,7 @@ async def update_sync_settings(
                 "endpoint": body.target_url,
                 "token": body.send_token,
                 "interval": body.interval,
+                "endpoints": body.send_endpoints,
             },
             "receive": {
                 "enabled": body.receive_enabled,
@@ -92,10 +91,16 @@ async def update_sync_settings(
     app_settings.sync_receive_enabled = body.receive_enabled
     app_settings.sync_target_url = body.target_url
     app_settings.sync_send_token = body.send_token
+    app_settings.sync_send_endpoints = body.send_endpoints
     app_settings.sync_receive_token = body.receive_token
     app_settings.sync_interval = body.interval
 
-    return {"ok": True}
+    push_result = {"ok": False, "message": "sync not configured"}
+    if body.enabled and (body.send_endpoints or body.target_url):
+        push_result = await asyncio.to_thread(SyncService(app_settings).push)
+        from backend.services.sync_service import record_push_result
+        record_push_result(push_result.get("ok", False), push_result.get("message"))
+    return {"ok": True, "push": push_result}
 
 
 @router.get("/status")
@@ -212,29 +217,13 @@ async def sync_auth_check(request: Request):
     return {"ok": True}
 
 
-@router.post("/verify")
-async def verify_target(
-    request: Request,
-    body: VerifyTargetIn,
-    user: User = Depends(require_admin),
-):
-    """Verify that a target panel is reachable and returns a valid health response."""
-    settings: Settings = request.app.state.settings
-    service = SyncService(settings)
-    result = service.verify_target(body.target_url, body.token)
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.get("message", "verification failed"),
-        )
-    return result
-
-
 @router.post("/push")
 async def trigger_push(request: Request, user: User = Depends(require_admin)):
     """Trigger an immediate sync push to the target panel."""
     settings: Settings = request.app.state.settings
-    if not settings.sync_enabled or not settings.sync_target_url:
+    if not settings.sync_enabled or not (
+        settings.sync_send_endpoints or settings.sync_target_url
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="发送同步未启用或未配置目标地址",

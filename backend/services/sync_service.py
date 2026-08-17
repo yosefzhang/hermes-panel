@@ -160,67 +160,49 @@ class SyncService:
             return f"{target}/"
         return f"{target}/api/v1/sync/"
 
-    def _headers(self) -> dict[str, str]:
+    def _send_endpoints(self) -> list[dict]:
+        if self.settings.sync_send_endpoints:
+            return self.settings.sync_send_endpoints
+        if self.settings.sync_target_url:
+            return [{"endpoint": self.settings.sync_target_url, "token": self.settings.sync_send_token}]
+        return []
+
+    def _headers(self, token: str | None = None) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.settings.sync_send_token:
-            headers["Authorization"] = f"Bearer {self.settings.sync_send_token}"
+        token = token if token is not None else self.settings.sync_send_token
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
     def push(self) -> dict:
         """Collect local stats and host info and POST them to the target panel."""
-        if not self.settings.sync_enabled or not self.settings.sync_target_url:
+        endpoints = self._send_endpoints()
+        if not self.settings.sync_enabled or not endpoints:
             return {"ok": False, "message": "sync not configured"}
 
         payload = self._collect_payload()
-        url = self._target_url()
-        logger.info(
-            "Sync push starting: url=%s profiles=%d hosts=%d",
-            url, len(payload.get("profiles", [])), len(payload.get("hosts", [])),
-        )
-        try:
-            response = self._http.request(
-                "POST",
-                url,
-                body=json.dumps(payload).encode("utf-8"),
-                headers=self._headers(),
-            )
-            status = response.status
-            message = response.data.decode("utf-8", errors="ignore")[:500]
-            if status == 200:
-                logger.info("Sync push to %s succeeded", url)
-                return {"ok": True, "status": status}
-            logger.warning("Sync push to %s failed: %s %s", url, status, message)
-            return {"ok": False, "status": status, "message": message}
-        except Exception:
-            logger.exception("Sync push to %s failed", url)
-            return {"ok": False, "message": "network error"}
+        results = []
+        for item in endpoints:
+            target = item.get("endpoint") or item.get("url")
+            if not target:
+                continue
+            url = self._normalize_target_url(str(target))
+            token = item.get("token")
+            logger.info("Sync push starting: url=%s profiles=%d hosts=%d", url, len(payload.get("profiles", [])), len(payload.get("hosts", [])))
+            try:
+                response = self._http.request("POST", url, body=json.dumps(payload).encode("utf-8"), headers=self._headers(token))
+                status = response.status
+                message = response.data.decode("utf-8", errors="ignore")[:500]
+                results.append({"endpoint": url, "ok": status == 200, "status": status, "message": message})
+            except Exception:
+                logger.exception("Sync push to %s failed", url)
+                results.append({"endpoint": url, "ok": False, "message": "network error"})
+        ok = bool(results) and all(item["ok"] for item in results)
+        return {"ok": ok, "results": results, "message": None if ok else "one or more sync endpoints failed"}
 
-    def verify_target(self, target_url: str, token: str | None = None) -> dict:
-        """Check reachability and validate the target's sync token."""
-        endpoint = target_url.rstrip("/")
-        if endpoint.endswith("/api/v1/sync"):
-            url = f"{endpoint}/auth-check"
-        else:
-            url = f"{endpoint}/api/v1/sync/auth-check"
-        headers = {}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        try:
-            response = self._http.request("GET", url, headers=headers)
-            status = response.status
-            body = response.data.decode("utf-8", errors="ignore")[:500]
-            if status == 200:
-                try:
-                    data = json.loads(body)
-                    if data.get("ok") is True:
-                        return {"ok": True, "status": status}
-                except json.JSONDecodeError:
-                    pass
-                return {"ok": False, "status": status, "message": "invalid sync auth response"}
-            return {"ok": False, "status": status, "message": body}
-        except Exception as exc:
-            logger.exception("Sync verify to %s failed", url)
-            return {"ok": False, "message": str(exc)}
+    def _normalize_target_url(self, target: str) -> str:
+        target = target.rstrip("/")
+        return f"{target}/" if target.endswith("/api/v1/sync") else f"{target}/api/v1/sync/"
 
     def _collect_payload(self) -> dict:
         """Gather everything this panel wants to share with its target."""

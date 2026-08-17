@@ -83,8 +83,7 @@ mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel
 | `log_level` | 后端日志级别 | `INFO` |
 | `component_versions` | 要查询版本号的组件列表，每项含 `name`/`command`/`args`/`regex` | hermes, node, npm, git, lark-cli, quectel-cli |
 | `sync.send.enabled` | 是否向目标面板推送数据 | `false` |
-| `sync.send.endpoint` | 数据同步远端端点 | - |
-| `sync.send.token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） | - |
+| `sync.send.endpoints` | 多个数据同步远端端点列表，每项包含 `endpoint` 和 `token` | `[]` |
 | `sync.send.interval` | 发送同步间隔（秒） | `600` |
 | `sync.receive.enabled` | 是否接收其它面板推送的数据 | `false` |
 | `sync.receive.token` | 接收端 `/sync/` 校验的入站凭证 | - |
@@ -254,13 +253,12 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 | 配置项 | 说明 |
 |--------|------|
 | `sync.send.enabled` | 本机是否定时把本地数据推送到目标面板 |
-| `sync.send.endpoint` | 数据同步远端端点，例如 `http://192.168.1.10:8650/api/v1/sync/` |
-| `sync.send.token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） |
+| `sync.send.endpoints` | 多个数据同步远端端点，每项包含端点地址和对应 Token |
 | `sync.send.interval` | 发送同步间隔（秒） |
 | `sync.receive.enabled` | 本机是否接收其它面板推送的数据 |
 | `sync.receive.token` | 接收端 `/sync/` 校验的入站凭证 |
 
-> 接收端 `POST /api/v1/sync/`（panel 间与外部系统通用）校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive.token` 一致。发送方向目标面板推送时使用 `sync.send.token` 作为出站凭证。
+> 接收端 `POST /api/v1/sync/`（panel 间与外部系统通用）校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive.token` 一致。发送方向每个目标面板使用 `sync.send.endpoints` 中对应的 `token` 作为出站凭证。
 
 ### 数据流向
 
@@ -303,7 +301,7 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
    - 启动时先执行一次完整采集，确保首次渲染有完整数据
    - 两个周期共用 `_collect_lock` 防止并发写入导致 `database is locked`
    - SQLite 使用 WAL 模式 + busy_timeout=10s 防止读写锁冲突
-2. `_run_sync_loop`：若 `sync.send.enabled=true` 且配置了 `sync.send.endpoint`，则每 `sync.send.interval` 秒把本地 `host_info` + `profile_info` 数据 POST 到目标面板
+2. `_run_sync_loop`：若 `sync.send.enabled=true` 且配置了 `sync.send.endpoints`，则每 `sync.send.interval` 秒把本地 `host_info` + `profile_info` 数据 POST 到所有目标面板
 
 > 前端"刷新"按钮（`POST /api/v1/profiles/aggregated/refresh`）会触发一次完整采集（含 host_info 刷新），不受后台定时周期限制。
 
@@ -329,7 +327,10 @@ python3 push_sync.py --url http://<目标面板IP>:8650/api/v1/sync/ --token <�
 
 ```json
 {
-  "url": "https://panel.example.com/api/v1/sync/",
+  "urls": [
+    "https://panel.example.com/api/v1/sync/",
+    "https://backup.example.com/api/v1/sync/"
+  ],
   "token": "<接收Token>",
   "hermes_home": "~/.hermes",
   "hermes_bin": "~/.local/bin/hermes",
