@@ -2,6 +2,8 @@
 
 Hermes Panel 是 Hermes Agent 的 Web 管理面板，用于集中查看和管理 Hermes 的配置、Profiles、模型、渠道、Skills、Plugins、Gateway、Token 用量和主机状态。它运行在 Hermes Agent 所在机器上，通过本机 `hermes` CLI 和数据目录提供管理能力，也支持多个 Panel 之间同步统计数据。
 
+![alt text](image.png)
+
 ## 快速开始
 
 ### 安装
