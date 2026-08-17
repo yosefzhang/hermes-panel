@@ -252,32 +252,34 @@ function SyncSettingsSection() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  <TableRow>
-                    <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
-                      {sendEndpoints.map((item) => item.endpoint).filter(Boolean).join('、') || targetUrl || '未配置'}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[200px]">
-                      {sendEndpoints.length ? `${sendEndpoints.length} 个端点` : (sendToken || '未配置')}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{interval} 秒</TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      {statusLoading ? '...' : (runtimeStatus?.send?.total_pushes ?? 0)}
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap text-emerald-600">
-                      {statusLoading ? '...' : (runtimeStatus?.send?.total_successes ?? 0)}
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap text-red-500">
-                      {statusLoading ? '...' : (runtimeStatus?.send?.total_failures ?? 0)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">
-                      {statusLoading ? '...' : (runtimeStatus?.send?.last_push_at ? new Date(runtimeStatus.send.last_push_at * 1000).toLocaleString() : '暂无')}
-                    </TableCell>
-                    {runtimeStatus?.send?.last_push_ok === false && (
-                      <TableCell className="text-xs text-red-500 break-all whitespace-normal max-w-[200px]">
-                        {runtimeStatus?.send?.last_push_message || ''}
-                      </TableCell>
-                    )}
-                  </TableRow>
+                    {(sendEndpoints.length ? sendEndpoints : [{ endpoint: targetUrl, token: sendToken }]).map((item, index) => (
+                      <TableRow key={`${item.endpoint}-${index}`}>
+                        <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
+                          {item.endpoint || '未配置'}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[200px]">
+                          {item.token ? '已配置' : '未配置'}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{index === 0 ? `${interval} 秒` : '—'}</TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.total_pushes ?? 0))}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap text-emerald-600">
+                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.total_successes ?? 0))}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap text-red-500">
+                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.total_failures ?? 0))}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.last_push_at ? new Date(runtimeStatus.send.last_push_at * 1000).toLocaleString() : '暂无'))}
+                        </TableCell>
+                        {runtimeStatus?.send?.last_push_ok === false && (
+                          <TableCell className="text-xs text-red-500 break-all whitespace-normal max-w-[200px]">
+                            {index === 0 ? (runtimeStatus?.send?.last_push_message || '') : ''}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
                 </TableBody>
               </Table>
             </div>
