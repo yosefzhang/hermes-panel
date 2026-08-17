@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useParams 
 import { Spin } from 'antd';
 import AppLayout from './components/AppLayout';
 import ErrorBoundary from './components/ErrorBoundary';
+import Settings from './pages/Settings';
 import { ToastProvider, Toaster } from '@/components/ui/toast';
 import { useAuthStore } from './store/authStore';
 import { useConfigStore } from './store/configStore';
@@ -10,7 +11,6 @@ import { useConfigStore } from './store/configStore';
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const ProfileStats = lazy(() => import('./pages/ProfileStats'));
-const Settings = lazy(() => import('./pages/Settings'));
 const SkillsManager = lazy(() => import('./pages/SkillsManager'));
 const PluginsManager = lazy(() => import('./pages/PluginsManager'));
 const ModelsConfig = lazy(() => import('./pages/ModelsConfig'));

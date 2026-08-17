@@ -125,8 +125,7 @@ class Settings(BaseModel):
     sync_enabled: bool = False
     sync_receive_enabled: bool = False
     sync_target_url: str | None = None
-    # send / receive tokens are separate keys, but fall back to the legacy
-    # shared "token" key so existing config.yaml files keep working.
+    # Outbound and inbound sync credentials are configured independently.
     sync_send_token: str | None = None
     sync_receive_token: str | None = None
     sync_interval: int = 600
@@ -183,10 +182,8 @@ def _build_settings_from_file(data: dict) -> Settings:
         sync_enabled=bool(sync.get("enabled", False)),
         sync_receive_enabled=bool(sync.get("receive_enabled", False)),
         sync_target_url=sync.get("target_url"),
-        # send / receive tokens are separate keys, but fall back to the legacy
-        # shared "token" key so existing config.yaml files keep working.
-        sync_send_token=sync.get("send_token", sync.get("token")),
-        sync_receive_token=sync.get("receive_token", sync.get("token")),
+        sync_send_token=sync.get("send_token"),
+        sync_receive_token=sync.get("receive_token"),
         sync_interval=int(sync.get("interval", 600)),
         component_versions=data.get("component_versions") or list(_DEFAULT_COMPONENT_VERSIONS),
     )

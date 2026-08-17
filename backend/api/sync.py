@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -106,8 +107,14 @@ async def get_sync_status(
     status["send"] = get_send_status()
     # Derive the local receive endpoint URL from the request so the UI can
     # show senders where to POST.
-    scheme = request.url.scheme
-    host = request.headers.get("host", f"{settings.host}:{settings.port}")
+    # TLS is commonly terminated by a reverse proxy before the request
+    # reaches Uvicorn, so request.url.scheme may still be ``http`` here.
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+    browser_url = request.headers.get("origin") or request.headers.get("referer") or ""
+    browser_parts = urlsplit(browser_url)
+    scheme = forwarded_proto or browser_parts.scheme or request.url.scheme
+    host = forwarded_host or browser_parts.netloc or request.headers.get("host", f"{settings.host}:{settings.port}")
     status["receive_url"] = f"{scheme}://{host}/api/v1/sync/"
     status["port"] = settings.port
     # Surface the currently configured receive token so the receiving-side UI

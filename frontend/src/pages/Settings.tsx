@@ -512,7 +512,7 @@ function SendSyncDialogForm({
   onSave: (updates: {
     enabled: boolean;
     targetUrl: string;
-    token: string;
+    sendToken: string;
     interval: number;
   }) => void;
   saving: boolean;
@@ -560,7 +560,7 @@ function SendSyncDialogForm({
         <Button variant="outline" onClick={() => onVerify(url, token)} disabled={verifying || saving}>
           {verifying ? '验证中...' : '验证连接'}
         </Button>
-        <Button onClick={() => onSave({ enabled: true, targetUrl: url, token, interval })} disabled={saving}>
+        <Button onClick={() => onSave({ enabled: true, targetUrl: url, sendToken: token, interval })} disabled={saving}>
           {saving ? '保存中...' : '保存配置'}
         </Button>
       </DialogFooter>

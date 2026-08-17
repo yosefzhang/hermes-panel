@@ -44,6 +44,39 @@ def test_default_admin_can_login_and_read_config(tmp_path: Path):
     assert response.json()["model"]["api_key"] == "sk-secret-value"
 
 
+def test_sync_status_uses_forwarded_https_url(tmp_path: Path):
+    client = make_client(tmp_path)
+    token = login(client)
+
+    response = client.get(
+        "/api/v1/sync/status",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "panel.example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["receive_url"] == "https://panel.example.com/api/v1/sync/"
+
+
+def test_sync_status_uses_browser_https_url_without_forwarded_headers(tmp_path: Path):
+    client = make_client(tmp_path)
+    token = login(client)
+
+    response = client.get(
+        "/api/v1/sync/status",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Referer": "https://panel.example.com/settings",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["receive_url"] == "https://panel.example.com/api/v1/sync/"
+
+
 def test_profile_files_return_basic_configuration_files(tmp_path: Path):
     client = make_client(tmp_path)
     token = login(client)

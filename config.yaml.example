@@ -76,4 +76,3 @@ sync:
   # send_token: presented to the target panel as Bearer on push
   # receive_token: verified on /sync/ inbound
   # interval: 600
-  # token: (legacy single shared token; kept for backwards compat, mapped to both)

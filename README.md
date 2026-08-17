@@ -87,7 +87,6 @@ mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel
 | `sync.target_url` | 数据同步目标面板地址 | - |
 | `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） | - |
 | `sync.receive_token` | 接收端 `/sync/` 校验的入站凭证 | - |
-| `sync.token` | 兼容旧配置：单一共享 token；未分别配置 send/receive 时回退到此键 | - |
 | `sync.interval` | 默认 600 秒 |
 
 ### 环境变量覆盖
@@ -259,7 +258,6 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 | `sync.target_url` | 数据同步远端端点，例如 `http://192.168.1.10:8650/api/v1/sync/` |
 | `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） |
 | `sync.receive_token` | 接收端 `/sync/` 校验的入站凭证 |
-| `sync.token` | 兼容旧配置：单一共享 token；未分别配置 send/receive 时回退到此键 |
 | `sync.interval` | 默认 600 秒 |
 
 > 接收端 `POST /api/v1/sync/`（panel 间与外部系统通用）校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive_token` 一致。发送方向目标面板推送时使用 `sync.send_token` 作为出站凭证。
