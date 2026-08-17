@@ -118,7 +118,7 @@ class HermesInfoService:
         profiles = self.profiles.list_profiles()
         return [self.get_profile_info(p) for p in profiles]
 
-    def get_system_versions(self) -> dict:
+    def get_system_versions(self) -> dict[str, str | None]:
         """获取系统组件版本，基于 config.yaml 中 ``component_versions`` 配置。
 
         每个配置项格式::
@@ -129,7 +129,7 @@ class HermesInfoService:
             # 可选: regex 提取版本号的正则
             regex: "v[\\d.]+"
         """
-        versions: dict[str, str] = {}
+        versions: dict[str, str | None] = {}
 
         # Python 版本始终包含（无需 CLI 调用）
         versions["python"] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -138,6 +138,9 @@ class HermesInfoService:
             name = comp.get("name") or comp.get("command")
             if not name:
                 continue
+            # Keep configured component columns stable even when the command
+            # is unavailable or returns no parseable version.
+            versions[name] = None
             command = comp.get("command", name)
             args = comp.get("args", ["--version"])
             version = self.get_command_version(command, args)

@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
-import { Check, X, Box, Server, Zap } from 'lucide-react';
+import { Check, X, Box, RefreshCw, Server, Zap } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -49,7 +50,7 @@ interface Server {
   username: string | null;
   ip: string | null;
   hermes_version: string | null;
-  components: Record<string, string>;
+  components: Record<string, string | null>;
   is_local: boolean;
   online: boolean;
   profiles: ProfileStat[];
@@ -142,10 +143,12 @@ function MemoryBadge({ available, provider }: { available: boolean | null; provi
 }
 
 function ServerSection({ server }: { server: Server }) {
-  const componentEntries = Object.entries(server.components || {});
-  // hermes_version is stored separately from components, merge it back for display
-  const allComponents: [string, string][] = [
-    ...(server.hermes_version ? [['hermes', server.hermes_version] as [string, string]] : []),
+  const componentEntries = Object.entries(server.components || {})
+    .filter(([key]) => key !== 'hermes') as [string, string | null][];
+  // Keep the configured Hermes column visible even when its version is null.
+  const hasHermes = server.hermes_version !== null || 'hermes' in (server.components || {});
+  const allComponents: [string, string | null][] = [
+    ...(hasHermes ? [['hermes', server.hermes_version] as [string, string | null]] : []),
     ...componentEntries,
   ];
 
@@ -162,9 +165,6 @@ function ServerSection({ server }: { server: Server }) {
               本地
             </Badge>
           )}
-          <Badge variant="outline" className={server.online ? 'text-emerald-600 border-emerald-200 bg-emerald-50' : 'text-red-500 border-red-200 bg-red-50'}>
-            {server.online ? '在线' : '离线'}
-          </Badge>
         </CardTitle>
         {allComponents.length > 0 && (
           <div className="mt-3 -mx-6 overflow-x-auto">
@@ -191,7 +191,7 @@ function ServerSection({ server }: { server: Server }) {
                   {allComponents.map(([key, value]) => {
                     return (
                       <TableCell key={key} className="whitespace-nowrap text-xs font-mono">
-                        {value}
+                        {value ?? '—'}
                       </TableCell>
                     );
                   })}
@@ -259,11 +259,29 @@ function ServerSection({ server }: { server: Server }) {
 
 export default function ProfileStats() {
   const fetchStats = useCallback(() => api.profileStats(), []);
-  const { data, loading, error } = useApi<ProfileStatsData>(fetchStats, []);
+  const { data, loading, error, execute: refresh } = useApi<ProfileStatsData>(fetchStats, []);
+  const handleRefresh = useCallback(() => api.refreshProfileStats(), []);
+  const { loading: refreshing, execute: executeRefresh } = useApi<ProfileStatsData>(
+    handleRefresh,
+    [],
+    { immediate: false },
+  );
+
+  const refreshStats = useCallback(async () => {
+    await executeRefresh(true);
+    await refresh(true);
+  }, [executeRefresh, refresh]);
 
   return (
     <PageContainer>
-      <PageHeader />
+      <PageHeader
+        extra={
+          <Button variant="outline" size="sm" onClick={refreshStats} disabled={refreshing || loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? '刷新中...' : '刷新'}
+          </Button>
+        }
+      />
       {loading && <Loading className="py-12" />}
       {!loading && error && <ErrorAlert message={error} />}
       {!loading && data && (

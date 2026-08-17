@@ -237,7 +237,7 @@ export const api = {
         username: string | null;
         ip: string | null;
         hermes_version: string | null;
-        components: Record<string, string>;
+        components: Record<string, string | null>;
         is_local: boolean;
         online: boolean;
         profiles: Array<{
@@ -274,7 +274,7 @@ export const api = {
         username: string | null;
         ip: string | null;
         hermes_version: string | null;
-        components: Record<string, string>;
+        components: Record<string, string | null>;
         is_local: boolean;
         online: boolean;
         profiles: Array<{

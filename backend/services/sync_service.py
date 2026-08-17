@@ -222,6 +222,7 @@ class SyncService:
         stats_service = ProfileStatsService(self.settings)
         host_service = HostInfoService(self.settings)
 
+        stats_service.cleanup_stale_records()
         profiles = [s.to_dict() for s in stats_service.get_all_stats()]
         hosts = [h.to_dict() for h in host_service.get_all_host_info()]
 
@@ -276,7 +277,6 @@ class SyncService:
                 components = dict(
                     h.get("components") or h.get("system_versions") or {}
                 )
-                components.pop("hermes", None)
                 conn.execute(
                     """
                     INSERT INTO host_info (host, username, ip, hermes_version, components, updated_at)

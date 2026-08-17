@@ -28,6 +28,7 @@ from backend.services.state_reader import StateReader
 logger = logging.getLogger(__name__)
 
 _DAILY_DAYS = 15
+_STALE_RECORD_SECONDS = 24 * 60 * 60
 _TOP_N = 5
 
 # Fields in the profile_info table that are stored as JSON strings.
@@ -333,6 +334,26 @@ class ProfileStatsService:
                 ).fetchall()
         return [_row_to_profile(row) for row in rows]
 
+    def cleanup_stale_records(self, now: float | None = None) -> int:
+        """Delete profile and host records that have not updated for 24 hours."""
+        cutoff = (now if now is not None else time.time()) - _STALE_RECORD_SECONDS
+        with connect(self.db_path) as conn:
+            profile_cursor = conn.execute(
+                "DELETE FROM profile_info WHERE updated_at < ?", (cutoff,)
+            )
+            host_cursor = conn.execute(
+                "DELETE FROM host_info WHERE updated_at < ?", (cutoff,)
+            )
+        deleted = (profile_cursor.rowcount or 0) + (host_cursor.rowcount or 0)
+        if deleted:
+            logger.info(
+                "cleanup_stale_records: deleted profiles=%d hosts=%d cutoff=%.0f",
+                profile_cursor.rowcount or 0,
+                host_cursor.rowcount or 0,
+                cutoff,
+            )
+        return deleted
+
     def get_aggregated(self, accessible_profiles: list[str] | None = None) -> dict:
         """Return stats grouped by server (host + username + ip).
 
@@ -340,6 +361,7 @@ class ProfileStatsService:
         separate host_info table; we fetch it once and graft it onto the
         server group keyed by the same (host, username, ip) tuple.
         """
+        self.cleanup_stale_records()
         stats = self.get_all_stats(accessible_profiles)
         servers: dict[str, dict] = {}
         local_server_id = make_server_id(socket.gethostname(), get_username(), get_primary_ip())

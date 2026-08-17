@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   Layers,
   MessageSquare,
-  RefreshCw,
   Server,
   Target,
   TrendingUp,
@@ -457,8 +456,8 @@ function DailyTrendCard({ data }: { data: DailyTrendPoint[] }) {
 }
 
 export default function Dashboard() {
-  const fetchDashboard = useCallback(() => api.refreshProfileStats(), []);
-  const { data, loading, error, execute: refresh } = useApi<DashboardData>(fetchDashboard, []);
+  const fetchDashboard = useCallback(() => api.profileStats(), []);
+  const { data, loading, error } = useApi<DashboardData>(fetchDashboard, []);
   const stats = useDashboardStats(data);
 
   if (error) {
@@ -471,14 +470,7 @@ export default function Dashboard() {
 
   return (
     <PageContainer>
-      <PageHeader
-        extra={
-          <Button variant="outline" size="sm" onClick={() => refresh()}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            刷新
-          </Button>
-        }
-      />
+      <PageHeader />
 
       {loading && <Loading className="py-12" />}
 

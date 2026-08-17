@@ -287,6 +287,7 @@ async def _refresh_local_data(
     # Run a full collection immediately on startup so the first dashboard
     # render has complete data.
     try:
+        stats_service.cleanup_stale_records()
         await asyncio.to_thread(stats_service.collect_local_stats)
         await asyncio.to_thread(host_info_service.refresh_local)
     except Exception:
@@ -296,6 +297,7 @@ async def _refresh_local_data(
     while True:
         try:
             await asyncio.sleep(_FAST_REFRESH_INTERVAL)
+            await asyncio.to_thread(stats_service.cleanup_stale_records)
             elapsed_since_full = time.time() - last_full
             if elapsed_since_full >= _FULL_REFRESH_INTERVAL:
                 logger.info("Local data refresh cycle (full) start")

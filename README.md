@@ -140,7 +140,7 @@ Hermes Panel 使用单一 SQLite 数据库文件存储所有自身数据，路�
 | `username` | 用户名 | - |
 | `ip` | IP 地址 | - |
 | `hermes_version` | Hermes CLI 版本 | 1h |
-| `components` | 除 Hermes 外的各组件版本信息，JSON | 1h |
+| `components` | 已配置查询的各组件版本信息，查询失败时值为 `null`，JSON | 1h |
 | `updated_at` | 更新时间戳 | 每次采集 |
 
 唯一约束：`UNIQUE(host, username, ip)`。

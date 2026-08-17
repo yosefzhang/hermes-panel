@@ -109,7 +109,6 @@ class HostInfoService:
         # columns. INSERT ... ON CONFLICT keeps the row when it already exists
         # and only refreshes hermes_version, components, updated_at.
         components = dict(info.components) if info.components else {}
-        components.pop("hermes", None)
         return conn.execute(
             """
             INSERT INTO host_info (host, username, ip, hermes_version, components, updated_at)
