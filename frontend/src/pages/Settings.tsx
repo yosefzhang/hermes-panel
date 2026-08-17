@@ -159,14 +159,16 @@ function SyncSettingsSection() {
     }
   };
 
-  const handleVerify = async () => {
-    if (!targetUrl) {
+  const handleVerify = async (urlToVerify: string, tokenToVerify: string) => {
+    if (!urlToVerify) {
+      setSendStatus('error');
+      setSendStatusText('请先配置远端同步端点');
       toast({ variant: 'destructive', title: '错误', description: '请先配置远端同步端点' });
       return;
     }
     setVerifying(true);
     try {
-      await api.verifySyncTarget(targetUrl, sendToken);
+      await api.verifySyncTarget(urlToVerify, tokenToVerify);
       setSendStatus('ok');
       setSendStatusText('连接正常');
       toast({ title: '验证成功', description: '目标面板可正常连接' });
@@ -317,6 +319,8 @@ function SyncSettingsSection() {
                 saving={saving}
                 onVerify={handleVerify}
                 verifying={verifying}
+                verificationStatus={sendStatus}
+                verificationStatusText={sendStatusText}
               />
             </DialogContent>
           </Dialog>
@@ -499,6 +503,8 @@ function SendSyncDialogForm({
   saving,
   onVerify,
   verifying,
+  verificationStatus,
+  verificationStatusText,
 }: {
   initialUrl: string;
   initialToken: string;
@@ -510,8 +516,10 @@ function SendSyncDialogForm({
     interval: number;
   }) => void;
   saving: boolean;
-  onVerify: () => void;
+  onVerify: (url: string, token: string) => void;
   verifying: boolean;
+  verificationStatus: 'idle' | 'ok' | 'error';
+  verificationStatusText: string;
 }) {
   const [url, setUrl] = useState(initialUrl);
   const [token, setToken] = useState(initialToken);
@@ -549,13 +557,18 @@ function SendSyncDialogForm({
         />
       </div>
       <DialogFooter>
-        <Button variant="outline" onClick={onVerify} disabled={verifying || saving}>
+        <Button variant="outline" onClick={() => onVerify(url, token)} disabled={verifying || saving}>
           {verifying ? '验证中...' : '验证连接'}
         </Button>
         <Button onClick={() => onSave({ enabled: true, targetUrl: url, token, interval })} disabled={saving}>
           {saving ? '保存中...' : '保存配置'}
         </Button>
       </DialogFooter>
+      {verificationStatus !== 'idle' && (
+        <p className={verificationStatus === 'error' ? 'text-sm text-destructive' : 'text-sm text-green-600'}>
+          {verificationStatusText}
+        </p>
+      )}
     </div>
   );
 }

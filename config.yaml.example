@@ -8,6 +8,9 @@
 # Path to Hermes Agent home directory (contains state.db, config.yaml, etc.)
 hermes_path: ~/.hermes
 
+# Production server port. Defaults to 8090.
+port: 8090
+
 # SQLite database path for hermes-panel's own data.
 # All panel tables (users, system metrics, profile statistics and host info)
 # live in this single database file.

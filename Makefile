@@ -38,8 +38,9 @@ build:
 	cd frontend && npm run build
 
 prod: ensure-backend-deps build
-	@echo "Starting production server on :8650 (serving frontend dist + API)..."
-	. .venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port 8650
+	@PORT=$$(.venv/bin/python -c 'from backend.config import get_settings; print(get_settings().port)'); \
+	echo "Starting production server on :$$PORT (serving frontend dist + API)..."; \
+	. .venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port $$PORT
 
 test:
 	. .venv/bin/activate && pytest backend/tests -v
@@ -54,8 +55,9 @@ clean:
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
 stop:
-	@echo "Stopping Hermes Panel processes on ports 8650 and 5173..."
-	@for port in 8650 5173; do \
+	@panel_port=$$(.venv/bin/python -c 'from backend.config import get_settings; print(get_settings().port)' 2>/dev/null || echo 80); \
+	echo "Stopping Hermes Panel processes on configured port $$panel_port, 8650 and 5173..."; \
+	for port in $$panel_port 80 8650 5173; do \
 		pids=$$(lsof -ti tcp:$$port 2>/dev/null || fuser -n tcp $$port 2>/dev/null || true); \
 		if [ -n "$$pids" ]; then \
 			echo "Stopping process(es) on :$$port -> $$pids"; \

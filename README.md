@@ -55,7 +55,7 @@ make dev          # 启动开发环境（后端 + 前端）
 make dev-backend  # 仅启动后端
 make dev-frontend # 仅启动前端
 make build        # 构建前端
-make prod         # 生产模式：构建前端并由后端 serve（单端口 8650，无热重载）
+make prod         # 生产模式：构建前端并由后端 serve（默认端口 8090，无热重载）
 make test         # 运行后端测试（pytest backend/tests）
 make lint         # ruff + tsc 类型检查
 make clean        # 清理构建产物
@@ -75,6 +75,7 @@ mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `hermes_path` | Hermes Agent 数据目录 | `~/.hermes` |
+| `port` | 生产模式监听端口 | `8090` |
 | `db_path` | Panel SQLite 数据库路径 | `~/.config/hermes-panel/hermes-panel.db` |
 | `jwt_secret` | JWT 签名密钥（生产环境必须修改） | `changeme` |
 | `default_admin_password` | 首次启动创建的 admin 密码 | `changeme` |
@@ -96,6 +97,7 @@ mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel
 | 环境变量 | 覆盖的配置项 |
 |----------|-------------|
 | `HERMES_PATH` | `hermes_path` |
+| `HERMES_PANEL_PORT` | `port` |
 | `HERMES_PANEL_DB` | `db_path` |
 | `HERMES_PANEL_JWT_SECRET` | `jwt_secret` |
 | `HERMES_PANEL_DEFAULT_ADMIN_PASSWORD` | `default_admin_password` |

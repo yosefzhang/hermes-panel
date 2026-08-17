@@ -73,7 +73,7 @@ class Settings(BaseModel):
     app_name: str = "Hermes Panel"
     api_prefix: str = "/api/v1"
     host: str = "0.0.0.0"
-    port: int = 8650
+    port: int = 8090
     hermes_home: Path = Field(default_factory=lambda: (Path.home() / ".hermes").expanduser())
     # Unified database file. All panel tables (control, profile stats, host info)
     # live in this single SQLite database. Defaults to hermes-panel.db.
@@ -146,6 +146,10 @@ def _build_settings_from_file(data: dict) -> Settings:
     """
     sync = data.get("sync", {}) or {}
     return Settings(
+        port=int(
+            os.environ.get("HERMES_PANEL_PORT")
+            or data.get("port", 8090)
+        ),
         hermes_home=Path(
             os.environ.get("HERMES_PATH")
             or data.get("hermes_path")

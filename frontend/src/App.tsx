@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useParams 
 import { Spin } from 'antd';
 import AppLayout from './components/AppLayout';
 import ErrorBoundary from './components/ErrorBoundary';
-import { ToastProvider, ToastViewport } from '@/components/ui/toast';
+import { ToastProvider, Toaster } from '@/components/ui/toast';
 import { useAuthStore } from './store/authStore';
 import { useConfigStore } from './store/configStore';
 
@@ -91,7 +91,7 @@ export default function App() {
           </Suspense>
         </ErrorBoundary>
       </BrowserRouter>
-      <ToastViewport />
+      <Toaster />
     </ToastProvider>
   );
 }
