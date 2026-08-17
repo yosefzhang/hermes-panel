@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
@@ -27,9 +26,7 @@ _DEFAULT_COMPONENT_VERSIONS: list[dict] = [
 
 def _config_path() -> Path:
     """Return the resolved path to the panel's config.yaml."""
-    return Path(
-        os.environ.get("HERMES_PANEL_CONFIG", CONFIG_DIR / "config.yaml")
-    ).expanduser()
+    return CONFIG_DIR / "config.yaml"
 
 
 def _ensure_config_file(path: Path) -> None:
@@ -47,9 +44,7 @@ def _ensure_config_file(path: Path) -> None:
 def _load_config_file() -> dict:
     """Load the panel's ``config.yaml`` and return it as a plain dict.
 
-    Real environment variables always take priority over file values for
-    the keys that have a corresponding env-var override (see *Settings*
-    field defaults).
+    All Panel settings are read from this YAML file.
     """
     path = _config_path()
     _ensure_config_file(path)
@@ -78,42 +73,30 @@ class Settings(BaseModel):
     # Unified database file. All panel tables (control, profile stats, host info)
     # live in this single SQLite database. Defaults to hermes-panel.db.
     hermes_panel_db_path: Path = Field(
-        default_factory=lambda: Path(
-            os.environ.get("HERMES_PANEL_DB") or (CONFIG_DIR / "hermes-panel.db")
-        ).expanduser()
+        default_factory=lambda: CONFIG_DIR / "hermes-panel.db"
     )
-    # Log file location. Defaults to ~/.config/hermes-panel/hermes-panel.log
-    # and can be overridden via HERMES_PANEL_LOG_FILE. A rotating handler
+    # Log file location. A rotating handler
     # keeps at most ``log_backup_count`` archived files of size
     # ``log_max_bytes`` each.
     log_file_path: Path = Field(
-        default_factory=lambda: Path(
-            os.environ.get("HERMES_PANEL_LOG_FILE") or (CONFIG_DIR / "hermes-panel.log")
-        ).expanduser()
+        default_factory=lambda: CONFIG_DIR / "hermes-panel.log"
     )
     log_max_bytes: int = Field(
-        default_factory=lambda: int(os.environ.get("HERMES_PANEL_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
+        default=5 * 1024 * 1024
     )
     log_backup_count: int = Field(
-        default_factory=lambda: int(os.environ.get("HERMES_PANEL_LOG_BACKUP_COUNT", "5"))
+        default=5
     )
     log_level: str = Field(
-        default_factory=lambda: os.environ.get("HERMES_PANEL_LOG_LEVEL", "INFO").upper()
+        default="INFO"
     )
     jwt_secret: str = Field(
-        default_factory=lambda: os.environ.get(
-            "HERMES_PANEL_JWT_SECRET",
-            "change-me-in-production-hermes-panel-secret-key",
-        )
+        default="change-me-in-production-hermes-panel-secret-key"
     )
     jwt_algorithm: str = "HS256"
     jwt_expires_hours: int = 24
     default_admin_password: str = Field(
-        default_factory=lambda: (
-            os.environ.get("HERMES_PANEL_DEFAULT_ADMIN_PASSWORD")
-            or os.environ.get("HERMES_PANEL_DEFAULT_PASSWORD")
-            or "admin"
-        )
+        default="admin"
     )
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8650"]
 
@@ -141,47 +124,19 @@ class Settings(BaseModel):
 def _build_settings_from_file(data: dict) -> Settings:
     """Build a Settings instance from the YAML config dict.
 
-    Environment variables (if set) override file values for the keys that
-    support env-var overrides.
+    All values come from the YAML configuration.
     """
     sync = data.get("sync", {}) or {}
     send_sync = sync.get("send", {}) or {}
     receive_sync = sync.get("receive", {}) or {}
     return Settings(
-        port=int(
-            os.environ.get("HERMES_PANEL_PORT")
-            or data.get("port", 8090)
-        ),
-        hermes_home=Path(
-            os.environ.get("HERMES_PATH")
-            or data.get("hermes_path")
-            or (Path.home() / ".hermes")
-        ).expanduser(),
-        hermes_panel_db_path=Path(
-            os.environ.get("HERMES_PANEL_DB")
-            or data.get("db_path")
-            or (CONFIG_DIR / "hermes-panel.db")
-        ).expanduser(),
-        log_file_path=Path(
-            os.environ.get("HERMES_PANEL_LOG_FILE")
-            or data.get("log_file")
-            or (CONFIG_DIR / "hermes-panel.log")
-        ).expanduser(),
-        log_level=(
-            os.environ.get("HERMES_PANEL_LOG_LEVEL")
-            or str(data.get("log_level", "INFO"))
-        ).upper(),
-        jwt_secret=(
-            os.environ.get("HERMES_PANEL_JWT_SECRET")
-            or data.get("jwt_secret")
-            or "change-me-in-production-hermes-panel-secret-key"
-        ),
-        default_admin_password=(
-            os.environ.get("HERMES_PANEL_DEFAULT_ADMIN_PASSWORD")
-            or os.environ.get("HERMES_PANEL_DEFAULT_PASSWORD")
-            or data.get("default_admin_password")
-            or "admin"
-        ),
+        port=int(data.get("port", 8090)),
+        hermes_home=Path(data.get("hermes_path") or (Path.home() / ".hermes")).expanduser(),
+        hermes_panel_db_path=Path(data.get("db_path") or (CONFIG_DIR / "hermes-panel.db")).expanduser(),
+        log_file_path=Path(data.get("log_file") or (CONFIG_DIR / "hermes-panel.log")).expanduser(),
+        log_level=str(data.get("log_level", "INFO")).upper(),
+        jwt_secret=data.get("jwt_secret") or "change-me-in-production-hermes-panel-secret-key",
+        default_admin_password=data.get("default_admin_password") or "admin",
         sync_enabled=bool(send_sync.get("enabled", False)),
         sync_receive_enabled=bool(receive_sync.get("enabled", False)),
         sync_target_url=send_sync.get("endpoint"),
@@ -219,6 +174,6 @@ def _deep_merge(base: dict, override: dict) -> None:
 
 
 def get_settings() -> Settings:
-    """Build a fresh Settings from config.yaml (with env-var overrides)."""
+    """Build a fresh Settings from config.yaml."""
     data = _load_config_file()
     return _build_settings_from_file(data)

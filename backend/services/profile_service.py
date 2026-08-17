@@ -1,7 +1,7 @@
 """Profile discovery and management.
 
 The panel discovers profiles by scanning ~/.hermes/profiles/ directory.
-It has NO dependency on HERMES_HOME environment variable.
+It uses the Panel-provided Hermes data directory.
 """
 from __future__ import annotations
 
@@ -29,12 +29,12 @@ class ProfileService:
     """Discover and manage Hermes profiles.
 
     The panel automatically discovers ~/.hermes and profiles under it.
-    It does NOT depend on HERMES_HOME environment variable.
+    The Hermes data directory is supplied explicitly by the Panel.
     """
 
     def __init__(self, hermes_home: Path | None = None):
         # Always use the current user's base Hermes directory unless explicitly
-        # overridden (e.g. for tests). Ignore HERMES_HOME env var.
+        # The explicit path also keeps tests isolated from the user's data.
         self.hermes_home = hermes_home or (Path.home() / ".hermes")
 
     def normalize_profile(self, profile: str | None) -> str:

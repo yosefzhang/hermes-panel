@@ -1,9 +1,6 @@
 # Hermes Panel Configuration
 #
 # Place this file at ~/.config/hermes-panel/config.yaml (loaded automatically on startup).
-# Override the path with HERMES_PANEL_CONFIG if needed.
-# Real environment variables always take priority over this file for keys that
-# support env-var overrides (e.g. HERMES_PANEL_DB, HERMES_PANEL_JWT_SECRET, etc.).
 
 # Path to Hermes Agent home directory (contains state.db, config.yaml, etc.)
 hermes_path: ~/.hermes

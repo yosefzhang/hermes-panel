@@ -478,19 +478,14 @@ def get_provider_models(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    import os as _os
-    proxies = None
-    _http_proxy = _os.environ.get("HTTP_PROXY") or _os.environ.get("http_proxy")
-    _https_proxy = _os.environ.get("HTTPS_PROXY") or _os.environ.get("https_proxy")
-    if _http_proxy or _https_proxy:
-        proxies = {"http": _http_proxy, "https": _https_proxy}
-
     import requests as req_lib
     from requests.exceptions import RequestException
 
     models_url = f"{base_url}/models"
     try:
-        resp = req_lib.get(models_url, headers=headers, proxies=proxies, timeout=15)
+        session = req_lib.Session()
+        session.trust_env = False
+        resp = session.get(models_url, headers=headers, timeout=15)
         if resp.status_code != 200:
             return ProviderModelsResult(
                 name=str(provider.get("name", name)),
@@ -605,15 +600,11 @@ def test_custom_provider_connection(
         "Content-Type": "application/json",
     }
 
-    import os as _os
-    proxies = None
-    _http_proxy = _os.environ.get("HTTP_PROXY") or _os.environ.get("http_proxy")
-    _https_proxy = _os.environ.get("HTTPS_PROXY") or _os.environ.get("https_proxy")
-    if _http_proxy or _https_proxy:
-        proxies = {"http": _http_proxy, "https": _https_proxy}
-
     import requests as req_lib
     from requests.exceptions import RequestException
+
+    session = req_lib.Session()
+    session.trust_env = False
 
     # 结果容器
     result = TestConnectionResult(
@@ -630,10 +621,9 @@ def test_custom_provider_connection(
     # ── 1. 测试 /v1/models ──
     models_url = f"{base_url}/models"
     try:
-        resp = req_lib.get(
+        resp = session.get(
             models_url,
             headers=headers,
-            proxies=proxies,
             timeout=15,
         )
         result.http_code = resp.status_code
@@ -672,11 +662,10 @@ def test_custom_provider_connection(
             "temperature": 0,
         }
         try:
-            chat_resp = req_lib.post(
+            chat_resp = session.post(
                 chat_url,
                 headers=headers,
                 json=chat_payload,
-                proxies=proxies,
                 timeout=30,
             )
             if chat_resp.status_code == 200:

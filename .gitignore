@@ -81,3 +81,8 @@ coverage/
 
 # Hermes 运行数据目录
 .hermes/
+
+# Agent skills are part of the repository and should be uploaded.
+!.agents/
+!.agents/**
+.trae/
