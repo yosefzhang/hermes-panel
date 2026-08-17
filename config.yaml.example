@@ -66,13 +66,13 @@ component_versions:
 # POSTed to the target panel's /api/v1/sync endpoint.
 # Inbound sync is accepted at /api/v1/sync/ (panel-to-panel and external
 # systems / CI / monitoring agents alike).
-# Tokens are split so the outbound credential (send_token) and inbound
-# credential (receive_token) can differ. The inbound endpoint verifies
-# receive_token via Authorization: Bearer.
+# Sending and receiving use separate, explicitly named configuration groups.
 sync:
-  enabled: false
-  receive_enabled: false
-  # target_url: http://127.0.0.1:8650/api/v1/sync/
-  # send_token: presented to the target panel as Bearer on push
-  # receive_token: verified on /sync/ inbound
-  # interval: 600
+  send:
+    enabled: false
+    # endpoint: http://127.0.0.1:8650/api/v1/sync/
+    # token: presented to the target panel as Bearer on push
+    interval: 600
+  receive:
+    enabled: false
+    # token: verified on /sync/ inbound

@@ -106,7 +106,7 @@ def ensure_receive_token(settings: Settings) -> str:
     alphabet = string.ascii_letters + string.digits
     token = "".join(secrets.choice(alphabet) for _ in range(16))
     try:
-        update_config_file({"sync": {"receive_token": token}})
+        update_config_file({"sync": {"receive": {"token": token}}})
     except Exception:
         logger.exception("ensure_receive_token: failed to persist generated token")
     settings.sync_receive_token = token

@@ -82,12 +82,12 @@ mkdir -p ~/.config/hermes-panel && cp config.yaml.example ~/.config/hermes-panel
 | `log_file` | 后端日志文件路径 | `~/.config/hermes-panel/hermes-panel.log` |
 | `log_level` | 后端日志级别 | `INFO` |
 | `component_versions` | 要查询版本号的组件列表，每项含 `name`/`command`/`args`/`regex` | hermes, node, npm, git, lark-cli, quectel-cli |
-| `sync.enabled` | 是否向目标面板推送数据 | `false` |
-| `sync.receive_enabled` | 是否接收其它面板推送的数据 | `false` |
-| `sync.target_url` | 数据同步目标面板地址 | - |
-| `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） | - |
-| `sync.receive_token` | 接收端 `/sync/` 校验的入站凭证 | - |
-| `sync.interval` | 默认 600 秒 |
+| `sync.send.enabled` | 是否向目标面板推送数据 | `false` |
+| `sync.send.endpoint` | 数据同步远端端点 | - |
+| `sync.send.token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） | - |
+| `sync.send.interval` | 发送同步间隔（秒） | `600` |
+| `sync.receive.enabled` | 是否接收其它面板推送的数据 | `false` |
+| `sync.receive.token` | 接收端 `/sync/` 校验的入站凭证 | - |
 
 ### 环境变量覆盖
 
@@ -253,14 +253,14 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
 
 | 配置项 | 说明 |
 |--------|------|
-| `sync.enabled` | 本机是否定时把本地数据推送到目标面板 |
-| `sync.receive_enabled` | 本机是否接收其它面板推送的数据 |
-| `sync.target_url` | 数据同步远端端点，例如 `http://192.168.1.10:8650/api/v1/sync/` |
-| `sync.send_token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） |
-| `sync.receive_token` | 接收端 `/sync/` 校验的入站凭证 |
-| `sync.interval` | 默认 600 秒 |
+| `sync.send.enabled` | 本机是否定时把本地数据推送到目标面板 |
+| `sync.send.endpoint` | 数据同步远端端点，例如 `http://192.168.1.10:8650/api/v1/sync/` |
+| `sync.send.token` | 发送同步提交给目标面板的出站凭证（`Authorization: Bearer`） |
+| `sync.send.interval` | 发送同步间隔（秒） |
+| `sync.receive.enabled` | 本机是否接收其它面板推送的数据 |
+| `sync.receive.token` | 接收端 `/sync/` 校验的入站凭证 |
 
-> 接收端 `POST /api/v1/sync/`（panel 间与外部系统通用）校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive_token` 一致。发送方向目标面板推送时使用 `sync.send_token` 作为出站凭证。
+> 接收端 `POST /api/v1/sync/`（panel 间与外部系统通用）校验请求头中的 `Authorization: Bearer <token>`，token 需与接收端配置的 `sync.receive.token` 一致。发送方向目标面板推送时使用 `sync.send.token` 作为出站凭证。
 
 ### 数据流向
 
@@ -275,7 +275,7 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
   │                                   ▼             │
   │                        SyncService.push()       │
   │                                   │             │
-  │                                   │ POST /api/v1/sync/（Bearer send_token）
+  │                                   │ POST /api/v1/sync/（Bearer send.token）
   │                                   │             │
   │                                   ▼             │
   │                        SyncService.ingest() ◄───┘
@@ -285,7 +285,7 @@ Hermes Panel 支持多实例之间的数据同步，用于把若干"子面板"�
   │
   │  外部系统（CI / 监控 Agent / 第三方工具）
   │                                   │
-  │                                   │ POST /api/v1/sync/（Bearer receive_token）
+  │                                   │ POST /api/v1/sync/（Bearer receive.token）
   │                                   ▼
   │                        SyncService.ingest() ◄───┘
   │                                   │
@@ -303,7 +303,7 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
    - 启动时先执行一次完整采集，确保首次渲染有完整数据
    - 两个周期共用 `_collect_lock` 防止并发写入导致 `database is locked`
    - SQLite 使用 WAL 模式 + busy_timeout=10s 防止读写锁冲突
-2. `_run_sync_loop`：若 `sync.enabled=true` 且配置了 `sync.target_url`，则每 `sync.interval` 秒把本地 `host_info` + `profile_info` 数据 POST 到目标面板
+2. `_run_sync_loop`：若 `sync.send.enabled=true` 且配置了 `sync.send.endpoint`，则每 `sync.send.interval` 秒把本地 `host_info` + `profile_info` 数据 POST 到目标面板
 
 > 前端"刷新"按钮（`POST /api/v1/profiles/aggregated/refresh`）会触发一次完整采集（含 host_info 刷新），不受后台定时周期限制。
 
@@ -311,8 +311,8 @@ FastAPI lifespan 启动两个后台任务（见 [`backend/main.py`](backend/main
 
 目标面板收到 `POST /api/v1/sync/`（panel 间与外部系统通用）后：
 
-1. 校验请求头 `Authorization: Bearer <token>` 中的 token 与接收端 `sync.receive_token` 一致
-2. 检查 `sync.receive_enabled`，未启用则返回 400
+1. 校验请求头 `Authorization: Bearer <token>` 中的 token 与接收端 `sync.receive.token` 一致
+2. 检查 `sync.receive.enabled`，未启用则返回 400
 3. 调用 `SyncService.ingest()`：将 payload 中的 `hosts` 写入本地 `host_info` 表，`profiles` 写入本地 `profile_info` 表（按 `(host, username, ip, profile_name)` 区分，不会覆盖本机数据）
 
 #### 独立推送脚本
@@ -325,7 +325,30 @@ python3 push_sync.py --url http://<目标面板IP>:8650/api/v1/sync/ --token <�
 python3 push_sync.py --url http://<目标面板IP>:8650/api/v1/sync/ --token <接收Token> --payload ./payload.json
 ```
 
-`--url` 必填；`--token` 对应接收端配置的 `sync.receive_token`（未配置时面板会自动生成一个 16 位 token 并在前端显示）。更多参数见 `python3 push_sync.py --help`。
+也可以用 JSON 文件保存基础采集配置，命令行参数会覆盖同名配置：
+
+```json
+{
+  "url": "https://panel.example.com/api/v1/sync/",
+  "token": "<接收Token>",
+  "hermes_home": "~/.hermes",
+  "hermes_bin": "~/.local/bin/hermes",
+  "profiles": ["default", "worker"],
+  "components": [
+    {"name": "hermes", "command": "hermes", "args": ["--version"]},
+    {"name": "node", "command": "node", "args": ["--version"]}
+  ],
+  "timeout": 30
+}
+```
+
+使用配置文件：
+
+```bash
+python3 push_sync.py --config ./push_sync.json
+```
+
+支持 `--hermes-home` 指定 Hermes 数据目录、`--hermes-bin` 指定 Hermes 可执行文件或所在目录、`--profiles` 选择 Profile、`--components` 选择组件名称列表，以及 `--no-components` 跳过版本采集。未查询到版本的组件仍会以 `null` 写入 payload，保持主机版本列稳定。`--token` 对应接收端配置的 `sync.receive.token`（未配置时面板会自动生成一个 16 位 token 并在前端显示）。更多参数见 `python3 push_sync.py --help`。
 
 相关代码：
 ````

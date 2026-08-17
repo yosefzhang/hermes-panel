@@ -387,6 +387,7 @@ class ProfileStatsService:
             host_meta[sid] = {
                 "hermes_version": h["hermes_version"],
                 "components": components,
+                "updated_at": h["updated_at"],
             }
 
         for s in stats:
@@ -400,6 +401,7 @@ class ProfileStatsService:
                     "ip": s.ip,
                     "hermes_version": meta.get("hermes_version"),
                     "components": meta.get("components", {}),
+                    "host_updated_at": meta.get("updated_at"),
                     "is_local": s.server_id == local_server_id,
                     "online": True,
                     "profiles": [],

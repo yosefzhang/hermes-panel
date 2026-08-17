@@ -71,12 +71,16 @@ async def update_sync_settings(
     app_settings: Settings = request.app.state.settings
     update_config_file({
         "sync": {
-            "enabled": body.enabled,
-            "receive_enabled": body.receive_enabled,
-            "target_url": body.target_url,
-            "send_token": body.send_token,
-            "receive_token": body.receive_token,
-            "interval": body.interval,
+            "send": {
+                "enabled": body.enabled,
+                "endpoint": body.target_url,
+                "token": body.send_token,
+                "interval": body.interval,
+            },
+            "receive": {
+                "enabled": body.receive_enabled,
+                "token": body.receive_token,
+            },
         }
     })
 

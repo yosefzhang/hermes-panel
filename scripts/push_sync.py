@@ -11,7 +11,7 @@ hermes-panel 一致的 payload，POST 到接收端点的 /api/v1/sync/ 接口，
 使用接收 Token（Authorization: Bearer）完成鉴权。
 
 用法示例:
-    python3 push_sync.py --url http://10.0.0.10:8650/api/v1/sync/ --token <RECEIVE_TOKEN>
+    python3 push_sync.py --config ./push_sync.json
     python3 push_sync.py --url http://10.0.0.10:8650/api/v1/sync/ --token <TOKEN> --verbose
     # 推送预先准备好的 payload 文件（跳过本机采集）
     python3 push_sync.py --url http://10.0.0.10:8650/api/v1/sync/ --token <TOKEN> --payload ./payload.json
@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import pwd
+import re
 import socket
 import sqlite3
 import subprocess
@@ -37,13 +38,13 @@ from pathlib import Path
 DEFAULT_PROFILE = "default"
 
 # 与面板 config.yaml 的 component_versions 保持一致；本机缺失的命令自动跳过。
-COMPONENTS: list[tuple[str, list[str]]] = [
-    ("hermes", ["--version"]),
-    ("node", ["--version"]),
-    ("npm", ["--version"]),
-    ("git", ["--version"]),
-    ("lark-cli", ["--version"]),
-    ("quectel-cli", ["--version"]),
+COMPONENTS: list[dict[str, object]] = [
+    {"name": "hermes", "command": "hermes", "args": ["--version"]},
+    {"name": "node", "command": "node", "args": ["--version"]},
+    {"name": "npm", "command": "npm", "args": ["--version"]},
+    {"name": "git", "command": "git", "args": ["--version"]},
+    {"name": "lark-cli", "command": "lark-cli", "args": ["--version"]},
+    {"name": "quectel-cli", "command": "quectel-cli", "args": ["--version"]},
 ]
 
 DAILY_DAYS = 15
@@ -89,8 +90,10 @@ def run_cmd(cmd: list[str], timeout: int = 5) -> str | None:
     return None
 
 
-def discover_profiles(hermes_home: Path) -> list[str]:
+def discover_profiles(hermes_home: Path, selected: list[str] | None = None) -> list[str]:
     """扫描 hermes_home，返回全部 profile 名（含 default）。"""
+    if selected:
+        return list(dict.fromkeys(selected))
     profiles = [DEFAULT_PROFILE]
     profiles_dir = hermes_home / "profiles"
     if profiles_dir.is_dir():
@@ -249,36 +252,67 @@ def read_profile_stats(hermes_home: Path, profile: str) -> dict:
     }
 
 
-def collect_host_info(hermes_home: Path, collect_components: bool) -> dict:
+def collect_host_info(
+    hermes_home: Path,
+    collect_components: bool,
+    components: list[dict[str, object]],
+    bin_dir: Path | None = None,
+    hermes_bin: Path | None = None,
+) -> dict:
     """采集本机 host_info。"""
     host = socket.gethostname()
     username = get_username()
     ip = get_primary_ip()
     hermes_version = None
-    components: dict[str, str] = {}
+    versions: dict[str, str | None] = {}
     if collect_components:
-        for name, args in COMPONENTS:
-            version = run_cmd([name] + args, timeout=3)
+        for component in components:
+            name = str(component.get("name") or component.get("command") or "")
+            command = str(component.get("command") or name)
+            args = [str(arg) for arg in component.get("args", ["--version"])]
+            if not name:
+                continue
+            versions[name] = None
+            if name == "hermes" and hermes_bin:
+                command_path = str(hermes_bin)
+            else:
+                command_path = str((bin_dir / command) if bin_dir and not Path(command).is_absolute() else command)
+            version = run_cmd([command_path] + args, timeout=3)
             if version:
-                components[name] = version
-        hermes_version = components.get("hermes")
+                pattern = component.get("regex")
+                if pattern:
+                    match = re.search(str(pattern), version)
+                    versions[name] = (
+                        match.group(1) if match and match.groups() else match.group(0)
+                        if match else version
+                    )
+                else:
+                    versions[name] = version
+        hermes_version = versions.get("hermes")
     return {
         "host": host,
         "username": username,
         "ip": ip,
         "hermes_version": hermes_version,
-        "components": components,
-        "system_versions": components,
+        "components": {key: value for key, value in versions.items() if key != "hermes"},
+        "system_versions": {key: value for key, value in versions.items() if key != "hermes"},
         "updated_at": time.time(),
     }
 
 
-def build_payload(hermes_home: Path, collect_components: bool) -> dict:
+def build_payload(
+    hermes_home: Path,
+    collect_components: bool,
+    components: list[dict[str, object]],
+    profiles: list[str] | None = None,
+    bin_dir: Path | None = None,
+    hermes_bin: Path | None = None,
+) -> dict:
     """采集本机数据并组装与面板一致的 payload。"""
-    host_info = collect_host_info(hermes_home, collect_components)
+    host_info = collect_host_info(hermes_home, collect_components, components, bin_dir, hermes_bin)
     server_id = f"{host_info['host']}|{host_info['username']}|{host_info['ip']}"
     profiles: list[dict] = []
-    for profile in discover_profiles(hermes_home):
+    for profile in discover_profiles(hermes_home, profiles):
         stats = read_profile_stats(hermes_home, profile)
         profiles.append(
             {
@@ -327,14 +361,57 @@ def main() -> int:
         prog="push_sync.py",
         description="将本机 Hermes 数据推送到 hermes-panel 接收端点（/api/v1/sync/），独立运行，仅依赖 Python 标准库。",
     )
-    parser.add_argument("--url", required=True, help="接收端点完整地址，例如 http://10.0.0.10:8650/api/v1/sync/")
-    parser.add_argument("--token", default=None, help="接收 Token（Authorization: Bearer），与接收端配置的 receive_token 一致")
+    parser.add_argument("--config", default=None, help="JSON 配置文件路径，命令行参数优先")
+    parser.add_argument("--url", default=None, help="接收端点完整地址，例如 http://10.0.0.10:8650/api/v1/sync/")
+    parser.add_argument("--token", default=None, help="接收 Token（Authorization: Bearer）")
     parser.add_argument("--payload", default=None, help="推送预先准备好的 JSON payload 文件（跳过本机采集）")
-    parser.add_argument("--hermes-home", default=str(Path.home() / ".hermes"), help="Hermes 主目录（默认 ~/.hermes）")
+    parser.add_argument("--hermes-home", default=None, help="Hermes 主目录（默认 ~/.hermes）")
+    parser.add_argument("--hermes-bin", default=None, help="Hermes 可执行文件路径或所在目录")
+    parser.add_argument("--profiles", default=None, help="只采集指定 Profile，逗号分隔；默认自动发现")
+    parser.add_argument("--components", default=None, help="只查询指定组件，逗号分隔；默认查询内置列表")
     parser.add_argument("--no-components", action="store_true", help="跳过组件版本采集（hermes/node/npm/git 等）")
     parser.add_argument("--timeout", type=int, default=30, help="HTTP 请求超时秒数（默认 30）")
     parser.add_argument("-v", "--verbose", action="store_true", help="打印采集到的 payload 摘要")
     args = parser.parse_args()
+
+    config: dict = {}
+    if args.config:
+        try:
+            with open(args.config, encoding="utf-8") as f:
+                config = json.load(f)
+            if not isinstance(config, dict):
+                raise ValueError("配置文件必须是 JSON 对象")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"[错误] 读取配置文件失败: {exc}", file=sys.stderr)
+            return 2
+
+    def value(name: str, default=None):
+        return getattr(args, name) if getattr(args, name) is not None else config.get(name, default)
+
+    url = value("url")
+    token = value("token")
+    timeout = int(value("timeout", 30))
+    hermes_home = Path(value("hermes_home", str(Path.home() / ".hermes"))).expanduser()
+    profiles = value("profiles")
+    profiles = [item.strip() for item in profiles.split(",") if item.strip()] if isinstance(profiles, str) else profiles
+    bin_value = value("hermes_bin")
+    hermes_bin = Path(bin_value).expanduser() if bin_value else None
+    bin_dir = hermes_bin if hermes_bin and hermes_bin.is_dir() else (hermes_bin.parent if hermes_bin else None)
+    if hermes_bin and hermes_bin.is_dir():
+        hermes_bin = hermes_bin / "hermes"
+    component_names = value("components")
+    if isinstance(component_names, str):
+        component_names = [item.strip() for item in component_names.split(",") if item.strip()]
+    configured_components = config.get("component_versions", COMPONENTS)
+    if component_names:
+        configured_components = [
+            item for item in configured_components
+            if str(item.get("name") or item.get("command")) in component_names
+        ]
+    collect_components = not args.no_components and value("collect_components", True)
+
+    if not url:
+        parser.error("必须提供 --url，或在 JSON 配置中设置 url")
 
     if args.payload:
         try:
@@ -348,11 +425,17 @@ def main() -> int:
             return 2
         print(f"[信息] 使用已提供的 payload 文件: {args.payload}")
     else:
-        hermes_home = Path(args.hermes_home).expanduser()
         if not hermes_home.is_dir():
             print(f"[错误] Hermes 主目录不存在: {hermes_home}", file=sys.stderr)
             return 2
-        payload = build_payload(hermes_home, collect_components=not args.no_components)
+        payload = build_payload(
+            hermes_home,
+            collect_components=collect_components,
+            components=configured_components,
+            profiles=profiles,
+            bin_dir=bin_dir,
+            hermes_bin=hermes_bin,
+        )
         print(
             f"[信息] 已采集本机数据: profiles={len(payload['profiles'])} hosts={len(payload['hosts'])}"
         )
@@ -360,7 +443,7 @@ def main() -> int:
     if args.verbose:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    result = push_payload(args.url, args.token, payload, args.timeout)
+    result = push_payload(url, token, payload, timeout)
     if result.get("ok"):
         print(f"[成功] 推送成功，状态码 {result.get('status')}")
         return 0

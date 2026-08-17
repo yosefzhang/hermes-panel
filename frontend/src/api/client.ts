@@ -238,6 +238,7 @@ export const api = {
         ip: string | null;
         hermes_version: string | null;
         components: Record<string, string | null>;
+        host_updated_at: number | null;
         is_local: boolean;
         online: boolean;
         profiles: Array<{
@@ -275,6 +276,7 @@ export const api = {
         ip: string | null;
         hermes_version: string | null;
         components: Record<string, string | null>;
+        host_updated_at: number | null;
         is_local: boolean;
         online: boolean;
         profiles: Array<{

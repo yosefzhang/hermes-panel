@@ -51,6 +51,7 @@ interface Server {
   ip: string | null;
   hermes_version: string | null;
   components: Record<string, string | null>;
+  host_updated_at: number | null;
   is_local: boolean;
   online: boolean;
   profiles: ProfileStat[];
@@ -90,6 +91,11 @@ function getTodayTokens(daily: DailyToken[]): number {
   const today = new Date().toISOString().slice(0, 10);
   const found = daily.find((d) => d.day === today);
   return found ? found.total_tokens : 0;
+}
+
+function formatHostUpdatedAt(timestamp: number | null): string {
+  if (!timestamp) return '更新时间：—';
+  return `更新时间：${new Date(timestamp * 1000).toLocaleString()}`;
 }
 
 function GatewayBadge({ status }: { status: string | null }) {
@@ -165,6 +171,9 @@ function ServerSection({ server }: { server: Server }) {
               本地
             </Badge>
           )}
+          <span className="text-xs font-normal text-muted-foreground">
+            {formatHostUpdatedAt(server.host_updated_at)}
+          </span>
         </CardTitle>
         {allComponents.length > 0 && (
           <div className="mt-3 -mx-6 overflow-x-auto">

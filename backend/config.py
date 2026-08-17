@@ -144,6 +144,8 @@ def _build_settings_from_file(data: dict) -> Settings:
     support env-var overrides.
     """
     sync = data.get("sync", {}) or {}
+    send_sync = sync.get("send", {}) or {}
+    receive_sync = sync.get("receive", {}) or {}
     return Settings(
         port=int(
             os.environ.get("HERMES_PANEL_PORT")
@@ -179,12 +181,12 @@ def _build_settings_from_file(data: dict) -> Settings:
             or data.get("default_admin_password")
             or "admin"
         ),
-        sync_enabled=bool(sync.get("enabled", False)),
-        sync_receive_enabled=bool(sync.get("receive_enabled", False)),
-        sync_target_url=sync.get("target_url"),
-        sync_send_token=sync.get("send_token"),
-        sync_receive_token=sync.get("receive_token"),
-        sync_interval=int(sync.get("interval", 600)),
+        sync_enabled=bool(send_sync.get("enabled", False)),
+        sync_receive_enabled=bool(receive_sync.get("enabled", False)),
+        sync_target_url=send_sync.get("endpoint"),
+        sync_send_token=send_sync.get("token"),
+        sync_receive_token=receive_sync.get("token"),
+        sync_interval=int(send_sync.get("interval", 600)),
         component_versions=data.get("component_versions") or list(_DEFAULT_COMPONENT_VERSIONS),
     )
 
@@ -194,7 +196,7 @@ def update_config_file(updates: dict) -> None:
 
     *updates* is a dict matching the top-level config.yaml structure, e.g.::
 
-        {"sync": {"enabled": True, "target_url": "http://..."}}
+        {"sync": {"send": {"enabled": True, "endpoint": "http://..."}}}
     """
     data = _load_config_file()
     _deep_merge(data, updates)

@@ -158,7 +158,8 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         )
 
         # Start sync task. The loop stays alive for the whole process
-        # lifetime and only pushes when `sync_enabled` and `sync_target_url`
+        # lifetime and only pushes when the nested send config is enabled and
+        # has an endpoint.
         # are both configured, so toggling the setting at runtime takes
         # effect without restarting the server.
         sync_service = SyncService(app.state.settings)
