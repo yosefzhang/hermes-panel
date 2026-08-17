@@ -14,7 +14,7 @@ ensure-backend-deps:
 		(echo "Installing backend dependencies..." && . .venv/bin/activate && pip install -e ".[dev]")
 
 ensure-frontend-deps:
-	@if [ ! -x frontend/node_modules/.bin/vite ]; then \
+	@if [ ! -x frontend/node_modules/.bin/vite ] || [ ! -x frontend/node_modules/.bin/tsc ]; then \
 		echo "Installing frontend dependencies..."; \
 		cd frontend && npm install; \
 	fi
@@ -34,7 +34,7 @@ dev-backend:
 dev-frontend:
 	cd frontend && npm run dev
 
-build:
+build: ensure-frontend-deps
 	cd frontend && npm run build
 
 prod: ensure-backend-deps build
