@@ -104,9 +104,14 @@ class ProfileStatsService:
                 full_cmd, result.returncode, result.stderr[:500],
             )
             return None
-        # Output line looks like: "  Config version: 30 → 33 (update available)"
+        # Hermes prints either "Config version: 30 -> 33" when an update is
+        # available or "Config version: 33 ✓" when the config is current.
         for line in result.stdout.splitlines():
             m = re.search(r"config version:\s*\d+\s*[→>]\s*(\d+)", line, re.IGNORECASE)
+            if m:
+                self._cached_latest_version = int(m.group(1))
+                return self._cached_latest_version
+            m = re.search(r"config version:\s*(\d+)", line, re.IGNORECASE)
             if m:
                 self._cached_latest_version = int(m.group(1))
                 return self._cached_latest_version

@@ -9,6 +9,7 @@ description = "Web control panel for Hermes Agent configuration."
 requires-python = ">=3.11"
 dependencies = [
     "aiosqlite>=0.20.0",
+    "certifi>=2024.0.0",
     "fastapi>=0.115.0",
     "httpx>=0.27.0",
     "passlib[bcrypt]>=1.7.4",

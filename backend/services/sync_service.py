@@ -11,6 +11,7 @@ import secrets
 import string
 import time
 
+import certifi
 import urllib3
 
 from backend.config import Settings, update_config_file
@@ -146,7 +147,11 @@ class SyncService:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.db_path = settings.hermes_panel_db_path
-        self._http = urllib3.PoolManager(timeout=urllib3.Timeout(connect=5, read=30))
+        self._http = urllib3.PoolManager(
+            cert_reqs="CERT_REQUIRED",
+            ca_certs=certifi.where(),
+            timeout=urllib3.Timeout(connect=5, read=30),
+        )
 
     def _target_url(self) -> str:
         """Return the configured sync endpoint, with legacy base URL support."""
