@@ -342,13 +342,9 @@ function SyncSettingsSection() {
                           {item.endpoint || '未配置'}
                         </TableCell>
                         <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[160px]">
-                          {item.token ? '已配置' : '未配置'}
+                          {item.token || '未配置'}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap">
-                          <Button variant="outline" size="sm" onClick={() => handleToggleEndpoint(index)} disabled={saving}>
-                            {item.enabled === false ? '启用' : '禁用'}
-                          </Button>
-                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{item.enabled === false ? '禁用' : '启用'}</TableCell>
                         <TableCell className="whitespace-nowrap">{index === 0 ? `${interval} 秒` : '—'}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">
                           {statusLoading ? '...' : (ep?.total_pushes ?? 0)}
@@ -369,6 +365,9 @@ function SyncSettingsSection() {
                         )}
                         <TableCell>
                           <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => handleToggleEndpoint(index)} disabled={saving}>
+                              {item.enabled === false ? '启用' : '禁用'}
+                            </Button>
                             <Button variant="outline" size="sm" disabled={!item.endpoint || pushingIndex === index} onClick={() => handlePush(index)}>
                               {pushingIndex === index ? '同步中...' : '同步'}
                             </Button>
