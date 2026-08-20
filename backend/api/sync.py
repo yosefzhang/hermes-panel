@@ -97,9 +97,8 @@ async def update_sync_settings(
 
     push_result = {"ok": False, "message": "sync not configured"}
     if body.enabled and (body.send_endpoints or body.target_url):
+        # SyncService.push records per-endpoint results internally.
         push_result = await asyncio.to_thread(SyncService(app_settings).push)
-        from backend.services.sync_service import record_push_result
-        record_push_result(push_result.get("ok", False), push_result.get("message"))
     return {"ok": True, "push": push_result}
 
 
@@ -218,8 +217,16 @@ async def sync_auth_check(request: Request):
 
 
 @router.post("/push")
-async def trigger_push(request: Request, user: User = Depends(require_admin)):
-    """Trigger an immediate sync push to the target panel."""
+async def trigger_push(
+    request: Request,
+    endpoint: str | None = None,
+    user: User = Depends(require_admin),
+):
+    """Trigger an immediate sync push to the target panel.
+
+    With an ``endpoint`` query parameter only that endpoint is pushed;
+    otherwise every enabled endpoint is pushed.
+    """
     settings: Settings = request.app.state.settings
     if not settings.sync_enabled or not (
         settings.sync_send_endpoints or settings.sync_target_url
@@ -229,9 +236,7 @@ async def trigger_push(request: Request, user: User = Depends(require_admin)):
             detail="发送同步未启用或未配置目标地址",
         )
     service = SyncService(settings)
-    result = await asyncio.to_thread(service.push)
-    from backend.services.sync_service import record_push_result
-    record_push_result(result.get("ok", False), result.get("message"))
+    result = await asyncio.to_thread(service.push, endpoint)
     if not result.get("ok"):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

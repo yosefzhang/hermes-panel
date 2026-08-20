@@ -47,11 +47,17 @@ function SyncSettingsSection() {
   const [receiveRuntimeEnabled, setReceiveRuntimeEnabled] = useState(false);
   const [targetUrl, setTargetUrl] = useState('');
   const [sendToken, setSendToken] = useState('');
-  const [sendEndpoints, setSendEndpoints] = useState<Array<{ endpoint: string; token: string }>>([]);
+  const [sendEndpoints, setSendEndpoints] = useState<Array<{ endpoint: string; token: string; enabled: boolean }>>([]);
   const [receiveToken, setReceiveToken] = useState('');
   const [interval, setInterval] = useState(60);
   const [saving, setSaving] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editUrl, setEditUrl] = useState('');
+  const [editToken, setEditToken] = useState('');
+  const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
+  const [pushingIndex, setPushingIndex] = useState<number | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<{
     enabled: boolean;
@@ -72,6 +78,17 @@ function SyncSettingsSection() {
       total_pushes: number;
       total_successes: number;
       total_failures: number;
+      endpoints: Record<
+        string,
+        {
+          last_push_at: number | null;
+          last_push_ok: boolean | null;
+          last_push_message: string | null;
+          total_pushes: number;
+          total_successes: number;
+          total_failures: number;
+        }
+      >;
     };
   } | null>(null);
 
@@ -108,79 +125,156 @@ function SyncSettingsSection() {
       setReceiveEnabled(data.receive_enabled);
       setTargetUrl(normalizeSyncEndpoint(data.target_url || ''));
       setSendToken(data.send_token || '');
-      setSendEndpoints(data.send_endpoints?.length ? data.send_endpoints : (data.target_url ? [{ endpoint: data.target_url, token: data.send_token || '' }] : []));
+      setSendEndpoints(
+        (data.send_endpoints?.length
+          ? data.send_endpoints
+          : data.target_url
+            ? [{ endpoint: data.target_url, token: data.send_token || '' }]
+            : []
+        ).map((item) => ({ endpoint: item.endpoint || '', token: item.token || '', enabled: (item as { enabled?: boolean }).enabled !== false })),
+      );
       setReceiveToken(data.receive_token || '');
       setInterval(data.interval);
       fetchStatus();
     }
   }, [data, fetchStatus]);
 
-  const handleSave = async (updates: {
-    enabled?: boolean;
-    receiveEnabled?: boolean;
-    targetUrl?: string;
-    sendToken?: string;
-    sendEndpoints?: Array<{ endpoint: string; token: string }>;
-    receiveToken?: string;
-    interval?: number;
-  }) => {
-    const nextEnabled = updates.enabled ?? enabled;
-    const nextReceiveEnabled = updates.receiveEnabled ?? receiveEnabled;
-    const nextTargetUrl = updates.targetUrl ?? targetUrl;
-    const nextSendToken = updates.sendToken ?? sendToken;
-    const nextSendEndpoints = updates.sendEndpoints ?? sendEndpoints;
-    const nextReceiveToken = updates.receiveToken ?? receiveToken;
-    const nextInterval = updates.interval ?? interval;
+  // Persist a new send-endpoint list (and the derived global send switch) to
+  // the backend.  Returns the API result so callers can show a precise toast.
+  const persistSettings = async (
+    nextEndpoints: Array<{ endpoint: string; token: string; enabled: boolean }>,
+  ): Promise<{ ok: boolean; push?: boolean }> => {
+    const nextEnabled = nextEndpoints.some((item) => item.enabled !== false);
     setSaving(true);
     try {
       const result = await api.updateSyncSettings({
         enabled: nextEnabled,
-        receive_enabled: nextReceiveEnabled,
-        target_url: nextTargetUrl || null,
-        send_token: nextSendToken || null,
-        receive_token: nextReceiveToken || null,
-        send_endpoints: nextSendEndpoints,
-        interval: nextInterval,
+        receive_enabled: receiveEnabled,
+        target_url: nextEndpoints[0]?.endpoint || null,
+        send_token: nextEndpoints[0]?.token || null,
+        receive_token: receiveToken,
+        send_endpoints: nextEndpoints,
+        interval,
       });
       setEnabled(nextEnabled);
-      setReceiveEnabled(nextReceiveEnabled);
-      setTargetUrl(nextTargetUrl);
-      setSendToken(nextSendToken);
-      setSendEndpoints(nextSendEndpoints);
-      if (nextReceiveToken !== undefined) setReceiveToken(nextReceiveToken);
-      setInterval(nextInterval);
-      setSendOpen(false);
-      toast({
-        title: '成功',
-        description: result.push?.ok ? '配置已保存，并已完成一次同步' : '配置已保存，但首次同步失败',
-      });
+      setSendEndpoints(nextEndpoints);
+      setTargetUrl(nextEndpoints[0]?.endpoint || '');
+      setSendToken(nextEndpoints[0]?.token || '');
       // Refresh runtime status after saving to reflect actual process state
       fetchStatus();
+      return { ok: true, push: result.push?.ok };
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '保存失败' });
+      return { ok: false };
     } finally {
       setSaving(false);
     }
   };
 
-  const [pushing, setPushing] = useState(false);
+  const handleSave = async (updates: {
+    enabled?: boolean;
+    receiveEnabled?: boolean;
+    targetUrl?: string;
+    sendToken?: string;
+    sendEndpoints?: Array<{ endpoint: string; token: string; enabled?: boolean }>;
+    receiveToken?: string;
+    interval?: number;
+  }) => {
+    const nextReceiveEnabled = updates.receiveEnabled ?? receiveEnabled;
+    const nextReceiveToken = updates.receiveToken ?? receiveToken;
+    const nextInterval = updates.interval ?? interval;
+    const nextSendEndpoints = (updates.sendEndpoints ?? sendEndpoints).map((item) => ({
+      endpoint: item.endpoint,
+      token: item.token,
+      enabled: item.enabled !== false,
+    }));
+    const result = await persistSettings(nextSendEndpoints);
+    if (!result.ok) return;
+    setReceiveEnabled(nextReceiveEnabled);
+    if (updates.receiveToken !== undefined) setReceiveToken(nextReceiveToken);
+    setInterval(nextInterval);
+    setSendOpen(false);
+    toast({
+      title: '成功',
+      description: result.push ? '配置已保存，并已完成一次同步' : '配置已保存，但首次同步失败',
+    });
+  };
 
-  const handlePush = async () => {
-    setPushing(true);
+  const handlePush = async (index: number) => {
+    const item = sendEndpoints[index];
+    if (!item?.endpoint) return;
+    setPushingIndex(index);
     try {
-      const result = await api.triggerSyncPush();
-      toast({ title: '同步成功', description: '数据已推送到目标面板' });
-      fetchStatus();
+      await api.triggerSyncPush(item.endpoint);
+      // 同步结果返回并展示后再刷新页面，避免点击瞬间就刷新看不到结果
+      toast({ title: '同步成功', description: `数据已推送到 ${item.endpoint}` });
+      setTimeout(() => window.location.reload(), 1000);
     } catch (err: unknown) {
       const message =
         (err && typeof err === 'object' && 'response' in err
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
           : undefined) || '推送失败';
       toast({ variant: 'destructive', title: '同步失败', description: message });
+      // 失败同样刷新，让页面展示最新状态
+      setTimeout(() => window.location.reload(), 1000);
     } finally {
-      setPushing(false);
+      setPushingIndex(null);
     }
   };
+
+  const openEdit = (index: number) => {
+    const item = sendEndpoints[index];
+    if (!item) return;
+    setEditingIndex(index);
+    setEditUrl(item.endpoint);
+    setEditToken(item.token);
+    setEditOpen(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (editingIndex === null) return;
+    if (!editUrl.trim()) {
+      toast({ variant: 'destructive', title: '错误', description: '端点地址不能为空' });
+      return;
+    }
+    const next = sendEndpoints.map((item, i) =>
+      i === editingIndex ? { ...item, endpoint: editUrl.trim(), token: editToken } : item,
+    );
+    const result = await persistSettings(next);
+    if (result.ok) {
+      setEditOpen(false);
+      toast({ title: '成功', description: '端点已更新' });
+    }
+  };
+
+  const handleToggleEndpoint = async (index: number) => {
+    const current = sendEndpoints[index];
+    if (!current) return;
+    const next = sendEndpoints.map((item, i) =>
+      i === index ? { ...item, enabled: item.enabled === false } : item,
+    );
+    const result = await persistSettings(next);
+    if (result.ok) {
+      toast({ title: '成功', description: `端点已${next[index].enabled ? '启用' : '禁用'}` });
+    }
+  };
+
+  const handleDeleteEndpoint = async () => {
+    if (deletingIndex === null) return;
+    const next = sendEndpoints.filter((_, i) => i !== deletingIndex);
+    const result = await persistSettings(next);
+    if (result.ok) {
+      setDeletingIndex(null);
+      toast({ title: '成功', description: '端点已删除' });
+    }
+  };
+
+  // 任一端点启用即视为发送同步处于活跃状态；任一端点最近一次推送失败时显示错误列
+  const anyEndpointEnabled = sendEndpoints.some((item) => item.enabled !== false);
+  const sendActive = enabled && anyEndpointEnabled;
+  const anyPushError = sendEndpoints.some(
+    (item) => runtimeStatus?.send?.endpoints?.[item.endpoint]?.last_push_ok === false,
+  );
 
   if (loading) return <Loading className="py-8" />;
 
@@ -195,95 +289,96 @@ function SyncSettingsSection() {
             <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm font-semibold">发送数据同步</h3>
-                <StatusBadge status={enabled ? 'ok' : 'disabled'} text={enabled ? '已启用' : '未启用'} />
+                <StatusBadge status={sendActive ? 'ok' : 'disabled'} text={sendActive ? '已启用' : '未启用'} />
               </div>
               <p className="text-sm text-muted-foreground">
                 将本机 profiles 数据同步到远程 hermes-panel
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              {enabled && (
-                <Button variant="outline" size="sm" onClick={handlePush} disabled={pushing}>
-                  {pushing ? '同步中...' : '同步一次'}
-                </Button>
-              )}
-              {enabled && (
-                <Button variant="outline" size="sm" onClick={() => setSendOpen(true)}>
-                  编辑配置
-                </Button>
-              )}
-              {enabled && (
-                <Button variant="outline" size="sm" onClick={fetchStatus} disabled={statusLoading}>
-                  {statusLoading ? '刷新中...' : '刷新'}
-                </Button>
-              )}
-              <Button
-                type="button"
-                size="sm"
-                disabled={saving}
-                onClick={() => {
-                  if (enabled) {
-                    handleSave({ enabled: false });
-                  } else {
-                    setSendOpen(true);
-                  }
-                }}
-              >
-                {enabled ? '禁用' : '启用'}
-              </Button>
-            </div>
+            <Button type="button" size="sm" onClick={() => setSendOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              新增
+            </Button>
           </div>
 
-          {enabled && (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="whitespace-nowrap">推送端点</TableHead>
+                  <TableHead className="whitespace-nowrap">发送 Token</TableHead>
+                  <TableHead className="whitespace-nowrap">状态</TableHead>
+                  <TableHead className="whitespace-nowrap">同步间隔</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">累计推送</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">成功</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">失败</TableHead>
+                  <TableHead className="whitespace-nowrap">最近推送时间</TableHead>
+                  {anyPushError && (
+                    <TableHead className="whitespace-nowrap">最近错误</TableHead>
+                  )}
+                  <TableHead className="whitespace-nowrap">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sendEndpoints.length === 0 ? (
                   <TableRow>
-                    <TableHead className="whitespace-nowrap">推送端点</TableHead>
-                    <TableHead className="whitespace-nowrap">发送 Token</TableHead>
-                    <TableHead className="whitespace-nowrap">同步间隔</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">累计推送</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">成功</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">失败</TableHead>
-                    <TableHead className="whitespace-nowrap">最近推送时间</TableHead>
-                    {runtimeStatus?.send?.last_push_ok === false && (
-                      <TableHead className="whitespace-nowrap">最近错误</TableHead>
-                    )}
+                    <TableCell colSpan={anyPushError ? 10 : 9} className="text-center py-8 text-muted-foreground">
+                      暂无推送端点，点击右上角「新增」添加
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {(sendEndpoints.length ? sendEndpoints : [{ endpoint: targetUrl, token: sendToken }]).map((item, index) => (
+                ) : (
+                  sendEndpoints.map((item, index) => {
+                    const ep = runtimeStatus?.send?.endpoints?.[item.endpoint];
+                    return (
                       <TableRow key={`${item.endpoint}-${index}`}>
                         <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
                           {item.endpoint || '未配置'}
                         </TableCell>
-                        <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[200px]">
+                        <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[160px]">
                           {item.token ? '已配置' : '未配置'}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Button variant="outline" size="sm" onClick={() => handleToggleEndpoint(index)} disabled={saving}>
+                            {item.enabled === false ? '启用' : '禁用'}
+                          </Button>
                         </TableCell>
                         <TableCell className="whitespace-nowrap">{index === 0 ? `${interval} 秒` : '—'}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">
-                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.total_pushes ?? 0))}
+                          {statusLoading ? '...' : (ep?.total_pushes ?? 0)}
                         </TableCell>
                         <TableCell className="text-right whitespace-nowrap text-emerald-600">
-                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.total_successes ?? 0))}
+                          {statusLoading ? '...' : (ep?.total_successes ?? 0)}
                         </TableCell>
                         <TableCell className="text-right whitespace-nowrap text-red-500">
-                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.total_failures ?? 0))}
+                          {statusLoading ? '...' : (ep?.total_failures ?? 0)}
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
-                          {index === 0 && (statusLoading ? '...' : (runtimeStatus?.send?.last_push_at ? new Date(runtimeStatus.send.last_push_at * 1000).toLocaleString() : '暂无'))}
+                          {statusLoading ? '...' : (ep?.last_push_at ? new Date(ep.last_push_at * 1000).toLocaleString() : '暂无')}
                         </TableCell>
-                        {runtimeStatus?.send?.last_push_ok === false && (
+                        {anyPushError && (
                           <TableCell className="text-xs text-red-500 break-all whitespace-normal max-w-[200px]">
-                            {index === 0 ? (runtimeStatus?.send?.last_push_message || '') : ''}
+                            {ep?.last_push_ok === false ? (ep?.last_push_message || '') : ''}
                           </TableCell>
                         )}
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" disabled={!item.endpoint || pushingIndex === index} onClick={() => handlePush(index)}>
+                              {pushingIndex === index ? '同步中...' : '同步'}
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openEdit(index)}>编辑</Button>
+                            <Button variant="outline" size="sm" onClick={() => setDeletingIndex(index)}>删除</Button>
+                            <Button variant="outline" size="sm" onClick={fetchStatus} disabled={statusLoading}>
+                              {statusLoading ? '刷新中...' : '刷新'}
+                            </Button>
+                          </div>
+                        </TableCell>
                       </TableRow>
-                    ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
 
           <Dialog open={sendOpen} onOpenChange={setSendOpen}>
             <DialogContent>
@@ -301,6 +396,51 @@ function SyncSettingsSection() {
               />
             </DialogContent>
           </Dialog>
+
+          <Dialog open={editOpen} onOpenChange={setEditOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>编辑推送端点</DialogTitle>
+                <DialogDescription>修改该端点的地址与发送 Token</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-endpoint">推送端点</Label>
+                  <Input
+                    id="edit-endpoint"
+                    placeholder="https://panel.example.com/api/v1/sync/"
+                    value={editUrl}
+                    onChange={(e) => setEditUrl(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-token">发送 Token</Label>
+                  <Input
+                    id="edit-token"
+                    type="password"
+                    placeholder="该端点的接收 Token"
+                    value={editToken}
+                    onChange={(e) => setEditToken(e.target.value)}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setEditOpen(false)}>取消</Button>
+                <Button onClick={handleSaveEdit} disabled={saving}>
+                  {saving ? '保存中...' : '保存'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <ConfirmDialog
+            open={deletingIndex !== null}
+            onOpenChange={(open) => { if (!open) setDeletingIndex(null); }}
+            title="确认删除"
+            description={<>确定要删除推送端点「{deletingIndex !== null ? (sendEndpoints[deletingIndex]?.endpoint || '未配置') : ''}」吗？</>}
+            variant="destructive"
+            onConfirm={handleDeleteEndpoint}
+          />
         </CardContent>
       </Card>
 
@@ -482,23 +622,25 @@ function SendSyncDialogForm({
 }: {
   initialUrl: string;
   initialToken: string;
-  initialEndpoints: Array<{ endpoint: string; token: string }>;
+  initialEndpoints: Array<{ endpoint: string; token: string; enabled: boolean }>;
   initialInterval: number;
   onSave: (updates: {
     enabled: boolean;
     targetUrl: string;
     sendToken: string;
-    sendEndpoints: Array<{ endpoint: string; token: string }>;
+    sendEndpoints: Array<{ endpoint: string; token: string; enabled: boolean }>;
     interval: number;
   }) => void;
   saving: boolean;
 }) {
-  const [endpoints, setEndpoints] = useState<Array<{ endpoint: string; token: string }>>(
-    initialEndpoints.length ? initialEndpoints : (initialUrl ? [{ endpoint: initialUrl, token: initialToken }] : [{ endpoint: '', token: '' }]),
+  const [endpoints, setEndpoints] = useState<Array<{ endpoint: string; token: string; enabled: boolean }>>(
+    initialEndpoints.length
+      ? initialEndpoints
+      : (initialUrl ? [{ endpoint: initialUrl, token: initialToken, enabled: true }] : [{ endpoint: '', token: '', enabled: true }]),
   );
   const [interval, setInterval] = useState(initialInterval);
 
-  const updateEndpoint = (index: number, key: 'endpoint' | 'token', value: string) => {
+  const updateEndpoint = (index: number, key: 'endpoint' | 'token' | 'enabled', value: string | boolean) => {
     setEndpoints((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
   };
 
@@ -526,7 +668,7 @@ function SendSyncDialogForm({
             </div>
           </div>
         ))}
-        <Button type="button" variant="outline" onClick={() => setEndpoints((current) => [...current, { endpoint: '', token: '' }])}>
+        <Button type="button" variant="outline" onClick={() => setEndpoints((current) => [...current, { endpoint: '', token: '', enabled: true }])}>
           <Plus className="mr-2 h-4 w-4" />
           添加端点
         </Button>

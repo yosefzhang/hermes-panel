@@ -70,6 +70,7 @@ sync:
     # endpoints:
     #   - endpoint: http://127.0.0.1:8650/api/v1/sync/
     #     token: presented to the target panel as Bearer on push
+    #     enabled: true  # optional per-endpoint switch (default: true)
     interval: 600
   receive:
     enabled: false

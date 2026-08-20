@@ -190,8 +190,12 @@ export const api = {
     const { data } = await apiClient.put<{ ok: boolean; push?: { ok: boolean; message?: string; results?: unknown[] } }>('/sync/settings', settings);
     return data;
   },
-  triggerSyncPush: async () => {
-    const { data } = await apiClient.post<{ ok: boolean; status?: number; message?: string }>('/sync/push');
+  triggerSyncPush: async (endpoint?: string) => {
+    const { data } = await apiClient.post<{ ok: boolean; status?: number; message?: string }>(
+      '/sync/push',
+      null,
+      { params: endpoint ? { endpoint } : undefined },
+    );
     return data;
   },
   syncStatus: async () => {
@@ -214,6 +218,17 @@ export const api = {
         total_pushes: number;
         total_successes: number;
         total_failures: number;
+        endpoints: Record<
+          string,
+          {
+            last_push_at: number | null;
+            last_push_ok: boolean | null;
+            last_push_message: string | null;
+            total_pushes: number;
+            total_successes: number;
+            total_failures: number;
+          }
+        >;
       };
     }>('/sync/status');
     return data;

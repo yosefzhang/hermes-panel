@@ -45,6 +45,9 @@ _send_state: dict = {
     "total_pushes": 0,
     "total_successes": 0,
     "total_failures": 0,
+    # Per-endpoint counters keyed by the raw configured endpoint string, so the
+    # UI can render one row of status per push target.
+    "endpoints": {},
 }
 
 
@@ -82,8 +85,13 @@ def initialize_send_state_from_settings(settings: Settings) -> None:
         logger.info("Send sync restored from settings - now pushing to target panel")
 
 
-def record_push_result(ok: bool, message: str | None = None) -> None:
-    """Record the outcome of a sync push attempt."""
+def record_push_result(endpoint: str, ok: bool, message: str | None = None) -> None:
+    """Record the outcome of a sync push attempt for a specific endpoint.
+
+    Aggregated counters are kept for backward compatibility; per-endpoint
+    counters live under ``_send_state["endpoints"][endpoint]`` (keyed by the raw
+    configured endpoint string) so the UI can render one row per push target.
+    """
     _send_state["last_push_at"] = time.time()
     _send_state["last_push_ok"] = ok
     _send_state["last_push_message"] = message
@@ -92,6 +100,26 @@ def record_push_result(ok: bool, message: str | None = None) -> None:
         _send_state["total_successes"] += 1
     else:
         _send_state["total_failures"] += 1
+
+    ep = _send_state["endpoints"].setdefault(
+        endpoint,
+        {
+            "last_push_at": None,
+            "last_push_ok": None,
+            "last_push_message": None,
+            "total_pushes": 0,
+            "total_successes": 0,
+            "total_failures": 0,
+        },
+    )
+    ep["last_push_at"] = time.time()
+    ep["last_push_ok"] = ok
+    ep["last_push_message"] = message
+    ep["total_pushes"] += 1
+    if ok:
+        ep["total_successes"] += 1
+    else:
+        ep["total_failures"] += 1
 
 
 def ensure_receive_token(settings: Settings) -> str:
@@ -129,7 +157,7 @@ def get_receive_status() -> dict:
 
 
 def get_send_status() -> dict:
-    """Return current send-sync runtime status."""
+    """Return current send-sync runtime status, including per-endpoint stats."""
     return {
         "enabled": _send_state["enabled"],
         "last_push_at": _send_state["last_push_at"],
@@ -138,6 +166,7 @@ def get_send_status() -> dict:
         "total_pushes": _send_state["total_pushes"],
         "total_successes": _send_state["total_successes"],
         "total_failures": _send_state["total_failures"],
+        "endpoints": dict(_send_state["endpoints"]),
     }
 
 
@@ -174,8 +203,13 @@ class SyncService:
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    def push(self) -> dict:
-        """Collect local stats and host info and POST them to the target panel."""
+    def push(self, endpoint: str | None = None) -> dict:
+        """Collect local stats and host info and POST them to the target panel.
+
+        Every enabled endpoint is pushed unless ``endpoint`` (a raw configured
+        target string) is given, in which case only that target is pushed.
+        Each attempt is recorded per-endpoint via ``record_push_result``.
+        """
         endpoints = self._send_endpoints()
         if not self.settings.sync_enabled or not endpoints:
             return {"ok": False, "message": "sync not configured"}
@@ -183,8 +217,13 @@ class SyncService:
         payload = self._collect_payload()
         results = []
         for item in endpoints:
+            # Per-endpoint on/off switch: disabled targets are skipped.
+            if item.get("enabled", True) is False:
+                continue
             target = item.get("endpoint") or item.get("url")
             if not target:
+                continue
+            if endpoint and target != endpoint:
                 continue
             url = self._normalize_target_url(str(target))
             token = item.get("token")
@@ -193,10 +232,16 @@ class SyncService:
                 response = self._http.request("POST", url, body=json.dumps(payload).encode("utf-8"), headers=self._headers(token))
                 status = response.status
                 message = response.data.decode("utf-8", errors="ignore")[:500]
-                results.append({"endpoint": url, "ok": status == 200, "status": status, "message": message})
+                ok = status == 200
             except Exception:
                 logger.exception("Sync push to %s failed", url)
-                results.append({"endpoint": url, "ok": False, "message": "network error"})
+                status = None
+                message = "network error"
+                ok = False
+            record_push_result(str(target), ok, message)
+            results.append({"endpoint": url, "ok": ok, "status": status, "message": message})
+        if not results and endpoint:
+            return {"ok": False, "message": "指定的端点未找到或已禁用"}
         ok = bool(results) and all(item["ok"] for item in results)
         return {"ok": ok, "results": results, "message": None if ok else "one or more sync endpoints failed"}
 

@@ -319,8 +319,6 @@ async def _refresh_local_data(
 
 async def _run_sync_loop(service: SyncService) -> None:
     """Background loop that pushes local stats to a target panel."""
-    from backend.services.sync_service import record_push_result
-
     while True:
         try:
             await asyncio.sleep(service.settings.sync_interval)
@@ -333,12 +331,11 @@ async def _run_sync_loop(service: SyncService) -> None:
             continue
 
         try:
-            result = await asyncio.to_thread(service.push)
-            record_push_result(result.get("ok", False), result.get("message"))
+            # SyncService.push records per-endpoint results internally.
+            await asyncio.to_thread(service.push)
         except asyncio.CancelledError:
             break
-        except Exception as exc:
-            record_push_result(False, str(exc))
+        except Exception:
             logger.exception("Sync push failed")
 
 
