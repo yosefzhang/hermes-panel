@@ -1964,7 +1964,7 @@ function MoATab({
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="flex items-center gap-2">
             <CardTitle>{presetName}</CardTitle>
-            <Badge variant={enabled ? 'default' : 'secondary'}>
+            <Badge variant={enabled ? 'outline' : 'secondary'} className={enabled ? 'border-transparent bg-green-600 text-white shadow' : ''}>
               {enabled ? '已启用' : '未启用'}
             </Badge>
           </div>
@@ -2006,7 +2006,10 @@ function MoATab({
                     <TableRow key={`ref-${idx}`}>
                       <TableCell>参考模型</TableCell>
                       <TableCell>
-                        <Badge variant={(ref.enabled ?? true) ? 'default' : 'secondary'} className="text-xs">
+                        <Badge
+                          variant={(ref.enabled ?? true) ? 'outline' : 'secondary'}
+                          className={`text-xs ${(ref.enabled ?? true) ? 'border-transparent bg-green-600 text-white shadow' : ''}`}
+                        >
                           {(ref.enabled ?? true) ? '是' : '否'}
                         </Badge>
                       </TableCell>

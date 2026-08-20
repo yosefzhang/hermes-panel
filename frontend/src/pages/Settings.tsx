@@ -143,13 +143,15 @@ function SyncSettingsSection() {
   // the backend.  Returns the API result so callers can show a precise toast.
   const persistSettings = async (
     nextEndpoints: Array<{ endpoint: string; token: string; enabled: boolean }>,
+    opts?: { receiveEnabled?: boolean },
   ): Promise<{ ok: boolean; push?: boolean }> => {
     const nextEnabled = nextEndpoints.some((item) => item.enabled !== false);
+    const nextReceiveEnabled = opts?.receiveEnabled ?? receiveEnabled;
     setSaving(true);
     try {
       const result = await api.updateSyncSettings({
         enabled: nextEnabled,
-        receive_enabled: receiveEnabled,
+        receive_enabled: nextReceiveEnabled,
         target_url: nextEndpoints[0]?.endpoint || null,
         send_token: nextEndpoints[0]?.token || null,
         receive_token: receiveToken,
@@ -188,15 +190,20 @@ function SyncSettingsSection() {
       token: item.token,
       enabled: item.enabled !== false,
     }));
-    const result = await persistSettings(nextSendEndpoints);
+    const result = await persistSettings(nextSendEndpoints, { receiveEnabled: nextReceiveEnabled });
     if (!result.ok) return;
     setReceiveEnabled(nextReceiveEnabled);
     if (updates.receiveToken !== undefined) setReceiveToken(nextReceiveToken);
     setInterval(nextInterval);
     setSendOpen(false);
+    // 只有当确实发起了同步推送时才展示推送结果提示；仅启用接收/保存其他配置时
+    // 后端 push 结果为 "sync not configured"，不应误报为"首次同步失败"。
+    const pushAttempted = nextSendEndpoints.some((item) => item.enabled !== false);
     toast({
       title: '成功',
-      description: result.push ? '配置已保存，并已完成一次同步' : '配置已保存，但首次同步失败',
+      description: pushAttempted
+        ? (result.push ? '配置已保存，并已完成一次同步' : '配置已保存，但首次同步失败')
+        : '配置已保存',
     });
   };
 
