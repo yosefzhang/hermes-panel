@@ -90,6 +90,7 @@ interface ProviderInfo {
   base_url: string;
   key_env: string;
   api_key?: string;
+  api_key_value?: string;
   api_mode?: string;
   default_model?: string;
   context_length?: number;
@@ -107,15 +108,19 @@ const API_MODE_OPTIONS = [
 ];
 
 const AUX_LABELS: Record<string, string> = {
-  vision: '视觉分析',
-  compression: '上下文压缩',
-  web_extract: '网页提取',
-  approval: '命令审批',
-  mcp: 'MCP 管理',
-  skills_hub: '技能中心',
-  title_generation: '标题生成',
-  tts_audio_tags: 'TTS 标签',
-  curator: '后台维护',
+  vision: '视觉分析(Vision)',
+  compression: '上下文压缩(Compression)',
+  web_extract: '网页提取(Web Extract)',
+  approval: '命令审批(Approval)',
+  mcp: 'MCP 管理(MCP)',
+  title_generation: '标题生成(Title Generation)',
+  memory_query_rewrite: '记忆查询重写(Memory Query Rewrite)',
+  tts_audio_tags: 'TTS 标签(TTS Audio Tags)',
+  skills_hub: '技能中心(Skills Hub)',
+  triage_specifier: '看板分诊指定(Triage Specifier)',
+  kanban_decomposer: '看板任务分解(Kanban Decomposer)',
+  profile_describer: 'Profile 描述(Profile Describer)',
+  curator: '后台维护(Curator)',
 };
 
 function ProvidersTab({
@@ -312,7 +317,7 @@ function ProvidersTab({
       toast({
         variant: 'destructive',
         title: '错误',
-        description: '名称和基础地址必填',
+        description: '名称和Base URL必填',
       });
       return;
     }
@@ -343,12 +348,17 @@ function ProvidersTab({
         toast({ variant: 'destructive', title: '错误', description: '名称不能为空' });
         return;
       }
+      const nameTrimmed = createData.name.trim();
+      if (providers.some((p) => (p.name || '').toLowerCase() === nameTrimmed.toLowerCase())) {
+        toast({ variant: 'destructive', title: '错误', description: '供应商名称已存在，请换一个' });
+        return;
+      }
       if (!createData.key_env_var?.trim()) {
         toast({ variant: 'destructive', title: '错误', description: '环境变量名不能为空' });
         return;
       }
       if (!createData.base_url?.trim()) {
-        toast({ variant: 'destructive', title: '错误', description: '基础地址不能为空' });
+        toast({ variant: 'destructive', title: '错误', description: 'Base URL不能为空' });
         return;
       }
     }
@@ -500,7 +510,7 @@ function ProvidersTab({
               <TableHeader>
                 <TableRow>
                   <TableHead>供应商</TableHead>
-                  <TableHead>基础地址</TableHead>
+                  <TableHead>Base URL</TableHead>
                   <TableHead>密钥</TableHead>
                   <TableHead>操作</TableHead>
                 </TableRow>
@@ -519,7 +529,12 @@ function ProvidersTab({
                       <TableCell title={row.base_url || (row.source === 'env' ? '(默认地址)' : '—')}>
                         {row.base_url || (row.source === 'env' ? '(默认地址)' : '—')}
                       </TableCell>
-                      <TableCell>{row.has_key ? (row.key_env || '已配置') : '未配置'}</TableCell>
+                      <TableCell
+                        className="font-mono text-xs max-w-[280px] truncate"
+                        title={row.api_key_value || row.key_env || ''}
+                      >
+                        {row.has_key ? (row.api_key_value || row.key_env || '已配置') : '未配置'}
+                      </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
                           <Button variant="outline" size="sm" onClick={() => openEdit(row)}>
@@ -681,7 +696,7 @@ function ProvidersTab({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="base_url">基础地址</Label>
+              <Label htmlFor="base_url">Base URL</Label>
               <Input
                 id="base_url"
                 value={editData?.base_url || ''}
@@ -821,7 +836,7 @@ function ProvidersTab({
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="preset_base_url">基础地址</Label>
+                  <Label htmlFor="preset_base_url">Base URL</Label>
                   <Input
                     id="preset_base_url"
                     value={createData.base_url}
@@ -848,7 +863,13 @@ function ProvidersTab({
                   <Input
                     id="name"
                     value={createData.name}
-                    onChange={(e) => setCreateData({ ...createData, name: e.target.value })}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      const autoKey = name.trim()
+                        ? name.trim().toUpperCase().replace(/[-\s]+/g, '_') + '_API_KEY'
+                        : '';
+                      setCreateData({ ...createData, name, key_env_var: autoKey });
+                    }}
                     placeholder="例如：my-provider"
                   />
                 </div>
@@ -872,7 +893,7 @@ function ProvidersTab({
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="base_url">基础地址</Label>
+                  <Label htmlFor="base_url">Base URL</Label>
                   <Input
                     id="base_url"
                     value={createData.base_url}
@@ -1060,7 +1081,7 @@ function MainModelTab({
               <TableCell>{modelData.default || '—'}</TableCell>
             </TableRow>
             <TableRow>
-              <TableCell className="font-medium">基础地址</TableCell>
+              <TableCell className="font-medium">Base URL</TableCell>
               <TableCell>{selectedProvider?.value || modelData.base_url || '—'}</TableCell>
             </TableRow>
             <TableRow>

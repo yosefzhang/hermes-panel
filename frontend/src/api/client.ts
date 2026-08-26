@@ -165,6 +165,23 @@ export const api = {
     const { data } = await apiClient.post<{ success: boolean; message: string; status?: unknown }>('/gateway/restart', { profile });
     return data;
   },
+  // ── Admin (batch operations across profiles) ──
+  adminGatewayBatch: async (action: 'start' | 'stop' | 'restart', profiles: string[]) => {
+    const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string; status?: unknown }> }>('/admin/gateway/batch', { action, profiles });
+    return data.results;
+  },
+  adminModelsCopy: async (profiles: string[], sourceProfile: string, sections: string[]) => {
+    const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string }> }>('/admin/models/copy', { profiles, source_profile: sourceProfile, sections });
+    return data.results;
+  },
+  adminModelsSet: async (profiles: string[], values: Record<string, unknown>) => {
+    const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string }> }>('/admin/models/set', { profiles, values });
+    return data.results;
+  },
+  adminSoulBatch: async (profiles: string[], content: string) => {
+    const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string }> }>('/admin/soul/batch', { profiles, content });
+    return data.results;
+  },
   // ── Sync ──
   syncSettings: async () => {
     const { data } = await apiClient.get<{

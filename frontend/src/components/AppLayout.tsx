@@ -16,6 +16,7 @@ import {
   Puzzle,
   Server,
   Settings,
+  ShieldCheck,
   Wrench,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
@@ -58,6 +59,7 @@ function routeLabel(pathname: string): string {
   if (pathname === '/dashboard') return '仪表盘';
   if (pathname === '/profiles') return 'Profiles';
   if (pathname === '/settings') return '设置';
+  if (pathname === '/admin') return '控制台';
   const m = pathname.match(/^\/([^/]+)\/([^/]+)/);
   if (m) {
     const cat = profileCategories.find((c) => c.key === m[2]);
@@ -219,6 +221,20 @@ export default function AppLayout() {
                       className="overflow-hidden"
                     >
                       <div className="ml-2 mt-1 space-y-1 border-l border-border pl-2">
+                        {host.isLocal && user?.role === 'admin' && (
+                          <button
+                            onClick={() => handleNavClick('/admin')}
+                            className={[
+                              'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200',
+                              isGlobalActive('/admin')
+                                ? 'bg-violet-100 text-violet-700 font-medium shadow-sm'
+                                : 'text-muted-foreground hover:bg-card/50 hover:text-foreground',
+                            ].join(' ')}
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                            <span className="flex-1 text-left">控制台</span>
+                          </button>
+                        )}
                         {host.profiles.map((profile) => {
                           const isActiveProfile = currentProfile === profile && isActiveHost;
                           const isExpandedProfile = expandedProfiles.has(profile);

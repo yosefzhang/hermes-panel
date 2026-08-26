@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import (
+    admin,
     auth,
     channels,
     config,
@@ -233,6 +234,7 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         system.audit_router,
         gateway.router,
         sync.router,
+        admin.router,
     ]
 
     for router in routers:

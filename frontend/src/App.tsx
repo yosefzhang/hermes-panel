@@ -17,6 +17,7 @@ const ModelsConfig = lazy(() => import('./pages/ModelsConfig'));
 const ChannelsConfig = lazy(() => import('./pages/ChannelsConfig'));
 const MemoryConfig = lazy(() => import('./pages/MemoryConfig'));
 const SoulPage = lazy(() => import('./pages/SoulPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const location = useLocation();
@@ -77,6 +78,7 @@ export default function App() {
                 <Route path="dashboard" element={<Dashboard />} />
                 <Route path="profiles" element={<ProfileStats />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="admin" element={<AdminPage />} />
                 <Route path=":profile" element={<ProfileRouteWrapper />}>
                   <Route path="models" element={<ModelsConfig />} />
                   <Route path="channels" element={<ChannelsConfig />} />

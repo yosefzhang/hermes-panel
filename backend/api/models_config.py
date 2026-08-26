@@ -238,6 +238,10 @@ def _collect_providers_from_config_and_env(
             continue
         seen.add(cname)
         key_env = cp.get("key_env", "") or ""
+        # 实际密钥值：优先取 .env 中 key_env 指向的变量值，否则取 inline api_key
+        actual_key = env_vars.get(key_env, "") if key_env else ""
+        if not actual_key:
+            actual_key = str(cp.get("api_key") or "")
         is_active = (cname == active_provider_name)
         result.append({
             "name": cname,
@@ -246,6 +250,7 @@ def _collect_providers_from_config_and_env(
             "api_mode": str(cp.get("api_mode") or ""),
             "key_env": key_env,
             "api_key": cp.get("api_key", "") or "",
+            "api_key_value": actual_key,
             "default_model": str(cp.get("default_model") or cp.get("model") or ""),
             "context_length": cp.get("context_length"),
             "rate_limit_delay": cp.get("rate_limit_delay"),
@@ -267,6 +272,7 @@ def _collect_providers_from_config_and_env(
             "base_url_env_var": str(info.get("base_url_env_var") or ""),
             "api_mode": "",
             "key_env": info.get("key_env", ""),
+            "api_key_value": env_vars.get(info.get("key_env", ""), ""),
             "has_key": True,
             "is_active": (name == active_provider_name),
         })
@@ -781,6 +787,12 @@ def create_provider(
     custom_list = config.get("custom_providers", [])
     if not isinstance(custom_list, list):
         custom_list = []
+    # 名称去重校验：已存在则拒绝（大小写不敏感）
+    if any(
+        isinstance(item, dict) and str(item.get("name", "")).lower() == entry_name.lower()
+        for item in custom_list
+    ):
+        raise HTTPException(status_code=400, detail=f"供应商 '{entry_name}' 已存在")
     next_list = [
         item for item in custom_list
         if not (isinstance(item, dict) and str(item.get("name", "")).lower() == entry_name.lower())
