@@ -30,6 +30,7 @@ class GatewayStatus:
     state: str | None = None
     platforms: dict = field(default_factory=dict)
     updated_at: str | None = None
+    started_at: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -39,6 +40,7 @@ class GatewayStatus:
             "state": self.state,
             "platforms": self.platforms,
             "updated_at": self.updated_at,
+            "started_at": self.started_at,
         }
 
 
@@ -105,6 +107,34 @@ class GatewayService:
         except (OSError, ProcessLookupError):
             return False
 
+    @staticmethod
+    def _process_start_ts(pid: int) -> float | None:
+        """从 /proc/<pid>/stat 读取进程启动时刻（epoch 秒），失败时返回 None。
+
+        第 22 个字段是启动时刻的 clock ticks，结合 /proc/stat 的 btime 换算。
+        """
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+        except OSError:
+            return None
+        # comm 字段可能包含空格或括号，取最后一个 ')' 之后的部分，即字段 3 起
+        body = stat.rsplit(")", 1)[1].split()
+        if len(body) < 20:
+            return None
+        try:
+            starttime = int(body[19])  # 字段 22 → body 下标 19
+            clk_tck = os.sysconf("SC_CLK_TCK")
+            btime = None
+            for line in Path("/proc/stat").read_text().splitlines():
+                if line.startswith("btime "):
+                    btime = int(line.split()[1])
+                    break
+            if btime is None:
+                return None
+        except (ValueError, OSError, IndexError):
+            return None
+        return btime + starttime / clk_tck
+
     # ── public API ────────────────────────────────────────
 
     def get_status(self, profile: str) -> GatewayStatus:
@@ -128,6 +158,7 @@ class GatewayService:
             state=state,
             platforms=platforms,
             updated_at=updated_at,
+            started_at=self._process_start_ts(pid) if running and pid else None,
         )
 
     def get_statuses(self, profiles: list[str]) -> list[GatewayStatus]:
@@ -160,6 +191,10 @@ class GatewayService:
         return result
 
     def restart(self, profile: str) -> dict:
+        status = self.get_status(profile)
+        if not status.running:
+            # 未运行时重启等价于启动；避免 `hermes gateway restart` 在无守护进程时长时间挂起
+            return self.start(profile)
         result = self._run(profile, "restart", timeout=50)
         if result["success"]:
             time.sleep(2)

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useRouter, usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BarChart3,
@@ -25,6 +25,7 @@ import { profileCategories } from '../config/profileCategories';
 
 interface HeaderContextValue {
   setExtra: (node: React.ReactNode) => void;
+  setDescription: (text: string | null) => void;
 }
 
 const HeaderContext = createContext<HeaderContextValue | null>(null);
@@ -35,6 +36,14 @@ export function useHeaderExtra() {
     throw new Error('useHeaderExtra must be used within AppLayout');
   }
   return ctx.setExtra;
+}
+
+export function useHeaderDescription() {
+  const ctx = useContext(HeaderContext);
+  if (!ctx) {
+    throw new Error('useHeaderDescription must be used within AppLayout');
+  }
+  return ctx.setDescription;
 }
 
 const SIDEBAR_WIDTH = 256;
@@ -68,23 +77,24 @@ function routeLabel(pathname: string): string {
   return 'Hermes Panel';
 }
 
-export default function AppLayout() {
-  const navigate = useNavigate();
-  const location = useLocation();
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname() ?? '';
   const { user, logout } = useAuthStore();
   const { profiles, hostProfiles, loadProfiles, loadHostProfiles } = useConfigStore();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [expandedHosts, setExpandedHosts] = useState<Set<string>>(new Set());
   const [expandedProfiles, setExpandedProfiles] = useState<Set<string>>(new Set());
   const [headerExtra, setHeaderExtra] = useState<React.ReactNode>(null);
+  const [headerDescription, setHeaderDescription] = useState<string | null>(null);
 
   useEffect(() => {
     loadProfiles().catch(() => undefined);
     loadHostProfiles().catch(() => undefined);
   }, [loadProfiles, loadHostProfiles]);
 
-  const isGlobalActive = (path: string) => location.pathname === path;
-  const pathMatch = location.pathname.match(/^\/([^/]+)\/([^/]+)/);
+  const isGlobalActive = (path: string) => pathname === path;
+  const pathMatch = pathname.match(/^\/([^/]+)\/([^/]+)/);
   const currentProfile = pathMatch?.[1] ?? null;
   const currentCategory = pathMatch?.[2] ?? null;
 
@@ -141,7 +151,7 @@ export default function AppLayout() {
   };
 
   const handleNavClick = (path: string) => {
-    navigate(path);
+    router.push(path);
     setMobileOpen(false);
   };
 
@@ -317,7 +327,7 @@ export default function AppLayout() {
           <button
             onClick={() => {
               logout();
-              navigate('/login');
+              router.push('/login');
             }}
             className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
             title="退出登录"
@@ -331,7 +341,7 @@ export default function AppLayout() {
   );
 
   return (
-    <HeaderContext.Provider value={{ setExtra: setHeaderExtra }}>
+    <HeaderContext.Provider value={{ setExtra: setHeaderExtra, setDescription: setHeaderDescription }}>
       <div className="mesh-bg min-h-screen flex">
         {/* Desktop sidebar */}
         <aside
@@ -376,9 +386,14 @@ export default function AppLayout() {
               >
                 <Menu className="h-5 w-5" />
               </button>
-              <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-tight">
-                {routeLabel(location.pathname)}
-              </h1>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-tight leading-tight">
+                  {routeLabel(pathname)}
+                </h1>
+                {headerDescription && (
+                  <p className="text-xs text-muted-foreground truncate">{headerDescription}</p>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2">{headerExtra}</div>
           </header>
@@ -387,13 +402,13 @@ export default function AppLayout() {
           <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-auto min-h-[calc(100vh-64px)]">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
-                key={location.pathname}
+                key={pathname}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -12 }}
                 transition={{ duration: 0.22, ease: 'easeOut' }}
               >
-                <Outlet />
+                {children}
               </motion.div>
             </AnimatePresence>
           </main>

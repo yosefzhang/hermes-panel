@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -116,24 +117,24 @@ def gateway_batch(
     if body.action not in _VALID_GATEWAY_ACTIONS:
         raise HTTPException(status_code=400, detail=f"Invalid action: {body.action}")
 
-    service = GatewayService()
-    results: list[dict] = []
-    for profile in body.profiles:
+    def _run_one(profile: str) -> dict:
+        # 每个线程独立一个 service 实例，避免并发下状态串扰
+        service = GatewayService()
         try:
             result = getattr(service, body.action)(profile)
-            results.append(
-                {
-                    "profile": profile,
-                    "success": bool(result.get("success")),
-                    "message": str(result.get("message") or ""),
-                    "status": result.get("status"),
-                }
-            )
+            return {
+                "profile": profile,
+                "success": bool(result.get("success")),
+                "message": str(result.get("message") or ""),
+                "status": result.get("status"),
+            }
         except Exception as exc:  # noqa: BLE001 - report per-profile errors
             logger.exception("admin gateway_batch: profile=%s failed", profile)
-            results.append(
-                {"profile": profile, "success": False, "message": str(exc)}
-            )
+            return {"profile": profile, "success": False, "message": str(exc)}
+
+    # 并发执行，缩短批量耗时；pool.map 保持与请求一致的顺序
+    with ThreadPoolExecutor(max_workers=min(len(body.profiles), 16)) as pool:
+        results = list(pool.map(_run_one, body.profiles))
 
     _audit(request, user, f"admin:gateway:{body.action}", body.profiles, results)
     return {"results": results}

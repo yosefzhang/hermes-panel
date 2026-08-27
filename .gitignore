@@ -37,6 +37,7 @@ pnpm-debug.log*
 
 # 前端构建产物
 frontend/dist/
+frontend/.next/
 
 # TypeScript 构建缓存
 *.tsbuildinfo

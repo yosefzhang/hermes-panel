@@ -150,7 +150,7 @@ export const api = {
   // ── Gateway ──
   gatewayStatus: async (profile?: string) => {
     const params = profile ? { profile } : {};
-    const { data } = await apiClient.get<{ statuses: Array<{ profile: string; running: boolean; pid: number | null; state: string | null; platforms: Record<string, unknown>; updated_at: string | null }> }>('/gateway/status', { params });
+    const { data } = await apiClient.get<{ statuses: Array<{ profile: string; running: boolean; pid: number | null; state: string | null; platforms: Record<string, unknown>; updated_at: string | null; started_at: number | null }> }>('/gateway/status', { params });
     return data.statuses;
   },
   gatewayStart: async (profile: string) => {
@@ -167,7 +167,12 @@ export const api = {
   },
   // ── Admin (batch operations across profiles) ──
   adminGatewayBatch: async (action: 'start' | 'stop' | 'restart', profiles: string[]) => {
-    const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string; status?: unknown }> }>('/admin/gateway/batch', { action, profiles });
+    // 批量操作涉及多个 profile 的 CLI 调用，放宽单次超时，避免前端过早中断
+    const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string; status?: unknown }> }>(
+      '/admin/gateway/batch',
+      { action, profiles },
+      { timeout: 120000 },
+    );
     return data.results;
   },
   adminModelsCopy: async (profiles: string[], sourceProfile: string, sections: string[]) => {
@@ -333,6 +338,35 @@ export const api = {
   },
   systemVersions: async () => {
     const { data } = await apiClient.get<Record<string, string>>('/system/versions');
+    return data;
+  },
+  // ── Hermes 更新 ──
+  checkHermesUpdate: async () => {
+    const { data } = await apiClient.get<{
+      current_version: string;
+      latest_version: string | null;
+      latest_version_tag?: string;
+      release_notes?: string;
+      published_at?: string;
+      release_url?: string;
+      check_output?: string;
+      has_update: boolean;
+      error?: string;
+    }>('/system/hermes-update');
+    return data;
+  },
+  startHermesUpgrade: async () => {
+    const { data } = await apiClient.post<{ success: boolean; message: string }>('/system/hermes-upgrade');
+    return data;
+  },
+  hermesUpgradeStatus: async () => {
+    const { data } = await apiClient.get<{
+      running: boolean;
+      success: boolean | null;
+      started_at: number | null;
+      finished_at: number | null;
+      output: string;
+    }>('/system/hermes-upgrade/status');
     return data;
   },
 };

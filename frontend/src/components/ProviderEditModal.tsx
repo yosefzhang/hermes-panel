@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Form, Input, Modal, Select, Space } from 'antd';
-import type { ProviderPreset } from '../pages/ModelsConfig';
+import type { ProviderPreset } from '../views/ModelsConfig';
 
 interface Props {
   open: boolean;

@@ -21,7 +21,7 @@ interface ConfigState {
 }
 
 export const useConfigStore = create<ConfigState>((set, get) => ({
-  activeProfile: localStorage.getItem('hermes-panel-profile') || 'default',
+  activeProfile: 'default',
   profiles: ['default'],
   hostProfiles: [],
   profileSections: {},
@@ -31,7 +31,11 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   },
   loadProfiles: async () => {
     const profiles = await api.profiles();
-    const activeProfile = profiles.includes(get().activeProfile) ? get().activeProfile : profiles[0] || 'default';
+    const stored = typeof window !== 'undefined' ? localStorage.getItem('hermes-panel-profile') : null;
+    const activeProfile =
+      (stored && profiles.includes(stored) ? stored : get().activeProfile && profiles.includes(get().activeProfile) ? get().activeProfile : null) ||
+      profiles[0] ||
+      'default';
     localStorage.setItem('hermes-panel-profile', activeProfile);
     set({ profiles, activeProfile });
   },

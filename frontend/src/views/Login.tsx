@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Command, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Login() {
-  const navigate = useNavigate();
+  const router = useRouter();
   const { login, loading } = useAuthStore();
   const { toast } = useToast();
   const [username, setUsername] = useState('');
@@ -20,7 +20,7 @@ export default function Login() {
     setError('');
     try {
       await login(username, password);
-      navigate('/dashboard');
+      router.push('/dashboard');
     } catch {
       setError('用户名或密码不正确');
       toast({

@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 5173",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "dev": "next dev -H 0.0.0.0 -p 8090",
+    "build": "next build",
+    "start": "next start -H 0.0.0.0"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
+    "@ant-design/nextjs-registry": "^1.0.2",
     "@chinese-fonts/maple-mono-cn": "^2.0.0",
     "@chinese-fonts/mksjh": "^3.0.0",
     "@radix-ui/react-alert-dialog": "^1.1.23",
@@ -32,23 +33,21 @@
     "echarts-for-react": "^3.0.2",
     "framer-motion": "^13.0.0",
     "lucide-react": "^1.28.0",
+    "next": "^14.2.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^6.28.1",
     "tailwind-merge": "^3.6.0",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.1.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.5.4",
     "postcss": "^8.5.25",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.7.2",
-    "vite": "^5.4.11"
+    "typescript": "^5.7.2"
   }
 }
