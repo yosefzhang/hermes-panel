@@ -33,7 +33,7 @@ ensure_backend() {
   fi
   if ! .venv/bin/python -c "import fastapi, uvicorn" >/dev/null 2>&1; then
     log "安装后端依赖..."
-    . .venv/bin/pip install -e ".[dev]"
+    .venv/bin/python -m pip install --retries 5 --timeout 120 -e ".[dev]"
   fi
 }
 
