@@ -32,6 +32,8 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+
     /* Violet unified palette */
     --background: 260 40% 98%;
     --foreground: 250 47% 11%;
@@ -74,6 +76,8 @@
   }
 
   .dark {
+    color-scheme: dark;
+
     --background: 250 47% 11%;
     --foreground: 260 40% 98%;
 
@@ -126,6 +130,26 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-family: "Maoken Assorted Sans", "猫啃杂黑体", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  }
+
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }
 

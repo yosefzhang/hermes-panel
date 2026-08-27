@@ -140,7 +140,7 @@ export default function ProviderEditModal({
           {editMode === 'preset' ? (
             <Form.Item name="name" label="选择 Provider *" rules={[{ required: true, message: '请选择 Provider' }]}>
               <Select
-                placeholder="选择一个 provider..."
+                placeholder="选择一个 provider…"
                 showSearch
                 allowClear
                 loading={presetsLoading}
@@ -175,7 +175,7 @@ export default function ProviderEditModal({
 
           <Form.Item name="api_key" label="API Key *" rules={[{ required: true, message: '请输入 API Key' }]}>
             <Input.Password
-              placeholder="sk-..."
+              placeholder="sk-…"
               visibilityToggle
             />
           </Form.Item>

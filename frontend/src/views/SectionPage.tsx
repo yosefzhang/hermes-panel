@@ -92,7 +92,7 @@ export default function SectionPage({ title, description, endpoint, readonlyList
               {!readonlyList && (
                 <Button onClick={handleSave} disabled={saving}>
                   <Save className="mr-2 h-4 w-4" />
-                  {saving ? '保存中...' : '保存'}
+                  {saving ? '保存中…' : '保存'}
                 </Button>
               )}
             </>

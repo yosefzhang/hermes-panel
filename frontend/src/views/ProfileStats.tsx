@@ -122,7 +122,7 @@ function ConfigVersionBadge({ current, latest }: { current: number | null; lates
         `font-normal ` +
         (outdated
           ? 'border-amber-200 bg-amber-50 text-amber-700'
-          : 'border-emerald-200 bg-emerald-50 text-emerald-700')
+          : 'border-success/40 bg-success/10 text-success')
       }
       title={isLegacy ? 'config.yaml 未写入 _config_version' : undefined}
     >
@@ -135,14 +135,14 @@ function MemoryBadge({ available, provider }: { available: boolean | null; provi
   if (!available) {
     return (
       <span className="inline-flex items-center gap-1 text-xs">
-        <X className="h-3 w-3 text-red-500" />
+        <X className="h-3 w-3 text-destructive" />
         未启用
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 text-xs">
-      <Check className="h-3 w-3 text-emerald-500" />
+      <Check className="h-3 w-3 text-success" />
       {provider || '已启用'}
     </span>
   );
@@ -287,7 +287,7 @@ export default function ProfileStats() {
         extra={
           <Button variant="outline" size="sm" onClick={refreshStats} disabled={refreshing || loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? '刷新中...' : '刷新'}
+            {refreshing ? '刷新中…' : '刷新'}
           </Button>
         }
       />

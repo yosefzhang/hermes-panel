@@ -218,7 +218,7 @@ export default function PluginsManager() {
           <div className="flex items-center gap-2">
             <div className="relative">
               <Input
-                placeholder="搜索当前分类下的插件..."
+                placeholder="搜索当前分类下的插件…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-[260px]"

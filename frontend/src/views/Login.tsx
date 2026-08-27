@@ -34,9 +34,9 @@ export default function Login() {
   return (
     <div className="min-h-screen mesh-bg flex items-center justify-center p-4 relative overflow-hidden">
       {/* Decorative blurred orbs */}
-      <div className="absolute -top-20 -left-20 h-96 w-96 rounded-full bg-blue-400/20 blur-3xl pointer-events-none" />
-      <div className="absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-blue-400/20 blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-24 left-1/3 h-96 w-96 rounded-full bg-blue-400/16 blur-3xl pointer-events-none" />
+      <div className="absolute -top-20 -left-20 h-96 w-96 rounded-full bg-primary/20 blur-3xl pointer-events-none" />
+      <div className="absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-primary/20 blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-24 left-1/3 h-96 w-96 rounded-full bg-primary/16 blur-3xl pointer-events-none" />
 
       <motion.div
         initial={{ opacity: 0, y: 24, scale: 0.98 }}
@@ -93,7 +93,7 @@ export default function Login() {
             </div>
             <Button
               type="submit"
-              className="w-full h-11 gradient-primary hover:opacity-95 text-white font-semibold shadow-soft transition-all"
+              className="w-full h-11 gradient-primary hover:opacity-95 text-white font-semibold shadow-soft transition-colors"
               disabled={loading}
             >
               {loading ? (

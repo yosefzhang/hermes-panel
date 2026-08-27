@@ -173,9 +173,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 key={key}
                 onClick={() => handleNavClick(key)}
                 className={[
-                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
+                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-200',
                     active
-                      ? 'bg-violet-100 text-violet-700 shadow-sm'
+                      ? 'bg-primary/10 text-primary shadow-sm'
                       : 'text-muted-foreground hover:bg-card/60 hover:text-foreground',
                   ].join(' ')}
               >
@@ -197,16 +197,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <button
                   onClick={() => toggleHost(host.id)}
                   className={[
-                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
+                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-200',
                     isActiveHost && !currentProfile
-                      ? 'bg-violet-100 text-violet-700 shadow-sm'
+                      ? 'bg-primary/10 text-primary shadow-sm'
                       : 'text-muted-foreground hover:bg-card/60 hover:text-foreground',
                   ].join(' ')}
                 >
                   <span
                     className={[
                       'h-2.5 w-2.5 rounded-full shrink-0',
-                      host.online ? 'bg-green-500' : 'bg-red-500',
+                      host.online ? 'bg-success' : 'bg-destructive',
                     ].join(' ')}
                   />
                   <span className="flex-1 text-left truncate">{host.name}</span>
@@ -235,9 +235,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                           <button
                             onClick={() => handleNavClick('/admin')}
                             className={[
-                              'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200',
+                              'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors duration-200',
                               isGlobalActive('/admin')
-                                ? 'bg-violet-100 text-violet-700 font-medium shadow-sm'
+                                ? 'bg-primary/10 text-primary font-medium shadow-sm'
                                 : 'text-muted-foreground hover:bg-card/50 hover:text-foreground',
                             ].join(' ')}
                           >
@@ -253,9 +253,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                               <button
                                 onClick={() => host.isLocal && toggleProfile(profile)}
                                 className={[
-                                  'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200',
+                                  'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors duration-200',
                                   isActiveProfile && !currentCategory
-                                    ? 'bg-violet-100 text-violet-700 font-medium shadow-sm'
+                                    ? 'bg-primary/10 text-primary font-medium shadow-sm'
                                     : host.isLocal
                                       ? 'text-muted-foreground hover:bg-card/50 hover:text-foreground'
                                       : 'text-muted-foreground/60 cursor-default',
@@ -288,9 +288,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                                             key={category.key}
                                             onClick={() => handleNavClick(`/${profile}/${category.key}`)}
                                             className={[
-                                              'w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-all duration-200',
+                                              'w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors duration-200',
                                               active
-                                                ? 'bg-violet-100 text-violet-700 font-medium shadow-sm'
+                                                ? 'bg-primary/10 text-primary font-medium shadow-sm'
                                                 : 'text-muted-foreground hover:bg-card/50 hover:text-foreground',
                                             ].join(' ')}
                                           >

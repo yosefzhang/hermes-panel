@@ -4,14 +4,14 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed',
+  'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed',
   {
     variants: {
       variant: {
         default:
           'bg-white dark:bg-slate-800 text-foreground shadow-sm border border-border hover:bg-primary hover:text-primary-foreground hover:shadow-md hover:border-primary',
         destructive:
-          'bg-white dark:bg-slate-800 text-red-600 dark:text-red-400 shadow-sm border border-red-200 dark:border-red-900 hover:bg-red-600 hover:text-white hover:shadow-md hover:border-red-600',
+          'bg-white dark:bg-slate-800 text-destructive shadow-sm border border-destructive/30 dark:border-destructive/30 hover:bg-destructive hover:text-destructive-foreground hover:shadow-md hover:border-destructive',
         outline:
           'border border-input bg-white dark:bg-slate-800 shadow-sm hover:bg-primary hover:text-primary-foreground hover:border-primary hover:shadow-md',
         secondary:

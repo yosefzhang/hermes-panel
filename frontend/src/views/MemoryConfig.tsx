@@ -99,7 +99,7 @@ export default function MemoryConfig() {
                 {editing && (
                   <Button size="sm" onClick={() => handleSave('MEMORY.md')} disabled={saving}>
                     <Save className="mr-2 h-4 w-4" />
-                    {saving ? '保存中...' : '保存'}
+                    {saving ? '保存中…' : '保存'}
                   </Button>
                 )}
               </CardHeader>
@@ -141,7 +141,7 @@ export default function MemoryConfig() {
                 {editing && (
                   <Button size="sm" onClick={() => handleSave('USER.md')} disabled={saving}>
                     <Save className="mr-2 h-4 w-4" />
-                    {saving ? '保存中...' : '保存'}
+                    {saving ? '保存中…' : '保存'}
                   </Button>
                 )}
               </CardHeader>

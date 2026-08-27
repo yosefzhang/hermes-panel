@@ -103,7 +103,7 @@ function SkillDetailPanel({ skill }: { skill: SkillRecord | null }) {
       <ScrollArea className="flex-1">
         <CardContent>
           {loading ? (
-            <div className="text-center p-12 text-muted-foreground">加载中...</div>
+            <div className="text-center p-12 text-muted-foreground">加载中…</div>
           ) : detail ? (
             <>
               {detail.frontmatter?.author && (
@@ -268,7 +268,7 @@ export default function SkillsManager() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="搜索 Skill 名称、描述或分类..."
+              placeholder="搜索 Skill 名称、描述或分类…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 w-[320px]"

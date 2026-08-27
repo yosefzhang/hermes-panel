@@ -353,7 +353,7 @@ export default function ChannelsConfig() {
                 <div key={field.key} className="grid grid-cols-[140px_1fr] gap-3 items-start">
                   <Label className="text-muted-foreground pt-2">
                     {field.label}
-                    {field.required && <span className="text-red-500 ml-1">*</span>}
+                    {field.required && <span className="text-destructive ml-1">*</span>}
                   </Label>
                   <div>
                     {field.type === 'boolean' ? (
@@ -403,7 +403,7 @@ export default function ChannelsConfig() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setModalOpen(false)}>取消</Button>
             <Button onClick={handleSubmit} disabled={saving}>
-              {saving ? '保存中...' : '保存'}
+              {saving ? '保存中…' : '保存'}
             </Button>
           </DialogFooter>
         </DialogContent>

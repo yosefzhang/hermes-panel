@@ -486,7 +486,7 @@ export default function Dashboard() {
                     icon: Server,
                     label: '主机数',
                     value: String(stats.hostCount),
-                    iconClass: 'bg-violet-100 text-violet-600',
+                    iconClass: 'bg-primary/10 text-primary',
                   }}
                 />
                 <MetricCard
@@ -502,7 +502,7 @@ export default function Dashboard() {
                     icon: CheckCircle2,
                     label: '网关正常运行',
                     value: String(stats.runningProfiles),
-                    iconClass: 'bg-emerald-100 text-emerald-600',
+                    iconClass: 'bg-success/15 text-success',
                   }}
                 />
               </MetricGroup>
@@ -514,7 +514,7 @@ export default function Dashboard() {
                     icon: Zap,
                     label: '总 Token',
                     value: fmt(stats.totalTokens),
-                    iconClass: 'bg-violet-100 text-violet-600',
+                    iconClass: 'bg-primary/10 text-primary',
                   }}
                 />
                 <MetricCard

@@ -23,7 +23,7 @@ export const CHANNEL_TYPES: ChannelTypeDef[] = [
     label: 'Telegram',
     description: '通过 Telegram Bot 接收和发送消息',
     fields: [
-      { key: 'token', label: 'Bot Token', type: 'password', placeholder: '123456:ABC-DEF1234gh...', required: true, tooltip: '从 @BotFather 获取的 Bot Token' },
+      { key: 'token', label: 'Bot Token', type: 'password', placeholder: '123456:ABC-DEF1234gh…', required: true, tooltip: '从 @BotFather 获取的 Bot Token' },
       { key: 'reactions', label: '消息反应', type: 'boolean', defaultValue: false, tooltip: '是否对消息添加 emoji 反应' },
       { key: 'allowed_chats', label: '允许的聊天 ID', type: 'text', placeholder: '留空表示不限制', tooltip: '逗号分隔的聊天 ID，留空为不限制' },
       { key: 'extra.rich_messages', label: '富文本消息', type: 'boolean', defaultValue: true, tooltip: '启用 Markdown 格式的富文本消息' },
@@ -34,7 +34,7 @@ export const CHANNEL_TYPES: ChannelTypeDef[] = [
     label: 'Discord',
     description: '通过 Discord Bot 在频道中交互',
     fields: [
-      { key: 'token', label: 'Bot Token', type: 'password', placeholder: 'MTAx...', required: true, tooltip: 'Discord Developer Portal 中的 Bot Token' },
+      { key: 'token', label: 'Bot Token', type: 'password', placeholder: 'MTAx…', required: true, tooltip: 'Discord Developer Portal 中的 Bot Token' },
       { key: 'require_mention', label: '需要 @提及', type: 'boolean', defaultValue: true, tooltip: '是否需要 @bot 才能触发回复' },
       { key: 'allowed_channels', label: '允许的频道 ID', type: 'text', placeholder: '留空表示所有频道', tooltip: '逗号分隔的频道 ID' },
       { key: 'free_response_channels', label: '自由回复频道', type: 'text', placeholder: '留空表示无', tooltip: '无需 @提及即可回复的频道 ID' },
@@ -54,7 +54,7 @@ export const CHANNEL_TYPES: ChannelTypeDef[] = [
     label: 'Slack',
     description: '通过 Slack Bot 在频道中交互',
     fields: [
-      { key: 'token', label: 'Bot Token', type: 'password', placeholder: 'xoxb-...', tooltip: 'Slack Bot Token（可选）' },
+      { key: 'token', label: 'Bot Token', type: 'password', placeholder: 'xoxb-…', tooltip: 'Slack Bot Token（可选）' },
       { key: 'require_mention', label: '需要 @提及', type: 'boolean', defaultValue: true, tooltip: '是否需要 @bot 才能触发回复' },
       { key: 'allowed_channels', label: '允许的频道', type: 'text', placeholder: '逗号分隔，留空表示不限制' },
       { key: 'free_response_channels', label: '自由回复频道', type: 'text', placeholder: '逗号分隔，留空表示无' },
@@ -88,10 +88,10 @@ export const CHANNEL_TYPES: ChannelTypeDef[] = [
     label: '飞书',
     description: '通过飞书开放平台接收和发送消息',
     fields: [
-      { key: 'app_id', label: 'App ID', type: 'text', placeholder: 'cli_...', required: true, tooltip: '飞书开放平台应用的 App ID' },
-      { key: 'app_secret', label: 'App Secret', type: 'password', placeholder: '...', required: true, tooltip: '飞书开放平台应用的 App Secret' },
-      { key: 'verification_token', label: 'Verification Token', type: 'text', placeholder: '...', tooltip: '飞书事件订阅的 Verification Token' },
-      { key: 'encrypt_key', label: 'Encrypt Key', type: 'text', placeholder: '...', tooltip: '飞书事件订阅的加密 Key' },
+      { key: 'app_id', label: 'App ID', type: 'text', placeholder: 'cli_…', required: true, tooltip: '飞书开放平台应用的 App ID' },
+      { key: 'app_secret', label: 'App Secret', type: 'password', placeholder: '…', required: true, tooltip: '飞书开放平台应用的 App Secret' },
+      { key: 'verification_token', label: 'Verification Token', type: 'text', placeholder: '…', tooltip: '飞书事件订阅的 Verification Token' },
+      { key: 'encrypt_key', label: 'Encrypt Key', type: 'text', placeholder: '…', tooltip: '飞书事件订阅的加密 Key' },
     ],
   },
   {
@@ -99,8 +99,8 @@ export const CHANNEL_TYPES: ChannelTypeDef[] = [
     label: '微信',
     description: '通过微信公众号/企业微信接收和发送消息',
     fields: [
-      { key: 'token', label: 'Token', type: 'text', placeholder: '...', required: true, tooltip: '微信公众平台的服务器 Token' },
-      { key: 'encoding_aes_key', label: 'EncodingAESKey', type: 'text', placeholder: '...', tooltip: '消息加密密钥（安全模式）' },
+      { key: 'token', label: 'Token', type: 'text', placeholder: '…', required: true, tooltip: '微信公众平台的服务器 Token' },
+      { key: 'encoding_aes_key', label: 'EncodingAESKey', type: 'text', placeholder: '…', tooltip: '消息加密密钥（安全模式）' },
     ],
   },
   {
@@ -120,8 +120,8 @@ export const CHANNEL_TYPES: ChannelTypeDef[] = [
     label: 'WhatsApp',
     description: '通过 WhatsApp Business API 收发消息',
     fields: [
-      { key: 'api_key', label: 'API Key', type: 'password', placeholder: '...', tooltip: 'WhatsApp Business API Key' },
-      { key: 'phone_number_id', label: 'Phone Number ID', type: 'text', placeholder: '...', tooltip: 'WhatsApp 电话号码 ID' },
+      { key: 'api_key', label: 'API Key', type: 'password', placeholder: '…', tooltip: 'WhatsApp Business API Key' },
+      { key: 'phone_number_id', label: 'Phone Number ID', type: 'text', placeholder: '…', tooltip: 'WhatsApp 电话号码 ID' },
     ],
   },
 ];

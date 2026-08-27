@@ -264,7 +264,7 @@ function GatewayTab({
               size="sm"
               onClick={() => doAction('start', '全部启动')}
               disabled={Object.keys(operating).length > 0 || statuses.length === 0}
-              className="text-green-600 border-green-300 hover:bg-green-50"
+              className="text-success border-success/30 hover:bg-success/10"
             >
               <Play className="mr-1 h-3.5 w-3.5" /> 全部启动
             </Button>
@@ -273,7 +273,7 @@ function GatewayTab({
               size="sm"
               onClick={() => doAction('stop', '全部停止')}
               disabled={Object.keys(operating).length > 0 || statuses.length === 0}
-              className="text-red-600 border-red-300 hover:bg-red-50"
+              className="text-destructive border-destructive/30 hover:bg-destructive/10"
             >
               <Square className="mr-1 h-3.5 w-3.5" /> 全部停止
             </Button>
@@ -311,7 +311,7 @@ function GatewayTab({
                       <TableCell className="font-mono text-xs">{s.profile}</TableCell>
                       <TableCell>
                         {operating[s.profile] ? (
-                          <Badge variant="outline" className="border-transparent bg-violet-100 text-violet-700">
+                          <Badge variant="outline" className="border-transparent bg-primary/10 text-primary">
                             <RotateCw className="mr-1 h-3 w-3 animate-spin" />
                             {ACTION_IN_PROGRESS[operating[s.profile]]}
                           </Badge>
@@ -334,7 +334,7 @@ function GatewayTab({
                               size="sm"
                               onClick={() => doSingle(s.profile, 'stop')}
                               disabled={Boolean(operating[s.profile])}
-                              className="bg-red-600 hover:bg-red-700 text-white"
+                              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                             >
                               <Square className="mr-1 h-3.5 w-3.5" /> 停止
                             </Button>
@@ -343,7 +343,7 @@ function GatewayTab({
                               size="sm"
                               onClick={() => doSingle(s.profile, 'start')}
                               disabled={Boolean(operating[s.profile])}
-                              className="bg-green-600 hover:bg-green-700 text-white"
+                              className="bg-success hover:bg-success/90 text-success-foreground"
                             >
                               <Play className="mr-1 h-3.5 w-3.5" /> 启动
                             </Button>
@@ -684,12 +684,12 @@ function UpdateTab() {
           {info && !info.error && (
             <div className="flex items-center gap-2">
               {info.has_update ? (
-                <Badge variant="outline" className="border-transparent bg-violet-100 text-violet-700">有可用更新</Badge>
+                <Badge variant="outline" className="border-transparent bg-primary/10 text-primary">有可用更新</Badge>
               ) : (
-                <Badge variant="outline" className="border-transparent bg-green-100 text-green-700">已是最新版本</Badge>
+                <Badge variant="outline" className="border-transparent bg-success/15 text-success">已是最新版本</Badge>
               )}
               {info.release_url && (
-                <a href={info.release_url} target="_blank" rel="noreferrer" className="text-xs text-violet-600 hover:underline">
+                <a href={info.release_url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
                   查看 Release
                 </a>
               )}
@@ -697,7 +697,7 @@ function UpdateTab() {
           )}
 
           {info?.error && (
-            <Badge variant="outline" className="border-transparent bg-red-100 text-red-700">{info.error}</Badge>
+            <Badge variant="outline" className="border-transparent bg-destructive/15 text-destructive">{info.error}</Badge>
           )}
 
           {info?.release_notes && (

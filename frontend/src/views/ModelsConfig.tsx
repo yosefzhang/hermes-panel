@@ -576,7 +576,7 @@ function ProvidersTab({
         return (
           <div className="space-y-3">
             {errorOnlyProviders.map((providerName) => (
-              <Card key={`err-${providerName}`} className="border-red-300/60">
+              <Card key={`err-${providerName}`} className="border-destructive/40">
                 <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold">{providerName}</span>
@@ -584,7 +584,7 @@ function ProvidersTab({
                   </div>
                 </CardHeader>
                 <CardContent className="pt-0 px-4 pb-4">
-                  <p className="text-sm text-red-600">{providerModelErrors[providerName]}</p>
+                  <p className="text-sm text-destructive">{providerModelErrors[providerName]}</p>
                 </CardContent>
               </Card>
             ))}
@@ -1985,7 +1985,7 @@ function MoATab({
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="flex items-center gap-2">
             <CardTitle>{presetName}</CardTitle>
-            <Badge variant={enabled ? 'outline' : 'secondary'} className={enabled ? 'border-transparent bg-green-600 text-white shadow' : ''}>
+            <Badge variant={enabled ? 'outline' : 'secondary'} className={enabled ? 'border-transparent bg-success text-success-foreground shadow' : ''}>
               {enabled ? '已启用' : '未启用'}
             </Badge>
           </div>
@@ -2029,7 +2029,7 @@ function MoATab({
                       <TableCell>
                         <Badge
                           variant={(ref.enabled ?? true) ? 'outline' : 'secondary'}
-                          className={`text-xs ${(ref.enabled ?? true) ? 'border-transparent bg-green-600 text-white shadow' : ''}`}
+                          className={`text-xs ${(ref.enabled ?? true) ? 'border-transparent bg-success text-success-foreground shadow' : ''}`}
                         >
                           {(ref.enabled ?? true) ? '是' : '否'}
                         </Badge>

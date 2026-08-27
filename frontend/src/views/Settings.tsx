@@ -347,19 +347,19 @@ function SyncSettingsSection() {
                         <TableCell className="whitespace-nowrap">{item.enabled === false ? '禁用' : '启用'}</TableCell>
                         <TableCell className="whitespace-nowrap">{index === 0 ? `${interval} 秒` : '—'}</TableCell>
                         <TableCell className="text-right whitespace-nowrap">
-                          {statusLoading ? '...' : (ep?.total_pushes ?? 0)}
+                          {statusLoading ? '…' : (ep?.total_pushes ?? 0)}
                         </TableCell>
-                        <TableCell className="text-right whitespace-nowrap text-emerald-600">
-                          {statusLoading ? '...' : (ep?.total_successes ?? 0)}
+                        <TableCell className="text-right whitespace-nowrap text-success">
+                          {statusLoading ? '…' : (ep?.total_successes ?? 0)}
                         </TableCell>
-                        <TableCell className="text-right whitespace-nowrap text-red-500">
-                          {statusLoading ? '...' : (ep?.total_failures ?? 0)}
+                        <TableCell className="text-right whitespace-nowrap text-destructive">
+                          {statusLoading ? '…' : (ep?.total_failures ?? 0)}
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
-                          {statusLoading ? '...' : (ep?.last_push_at ? new Date(ep.last_push_at * 1000).toLocaleString() : '暂无')}
+                          {statusLoading ? '…' : (ep?.last_push_at ? new Date(ep.last_push_at * 1000).toLocaleString() : '暂无')}
                         </TableCell>
                         {anyPushError && (
-                          <TableCell className="text-xs text-red-500 break-all whitespace-normal max-w-[200px]">
+                          <TableCell className="text-xs text-destructive break-all whitespace-normal max-w-[200px]">
                             {ep?.last_push_ok === false ? (ep?.last_push_message || '') : ''}
                           </TableCell>
                         )}
@@ -501,19 +501,19 @@ function SyncSettingsSection() {
                 <TableBody>
                   <TableRow>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[280px]">
-                      {statusLoading ? '...' : (runtimeStatus?.receive_url || '—')}
+                      {statusLoading ? '…' : (runtimeStatus?.receive_url || '—')}
                     </TableCell>
                     <TableCell className="font-mono text-xs break-all whitespace-normal max-w-[160px]">
-                      {statusLoading ? '...' : (receiveToken || '—')}
+                      {statusLoading ? '…' : (receiveToken || '—')}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {statusLoading ? '...' : formatUptime(runtimeStatus?.uptime_seconds ?? 0)}
+                      {statusLoading ? '…' : formatUptime(runtimeStatus?.uptime_seconds ?? 0)}
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
-                      {statusLoading ? '...' : (runtimeStatus?.total_payloads ?? 0)}
+                      {statusLoading ? '…' : (runtimeStatus?.total_payloads ?? 0)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {statusLoading ? '...' : (runtimeStatus?.last_received_at ? new Date(runtimeStatus.last_received_at * 1000).toLocaleString() : '暂无')}
+                      {statusLoading ? '…' : (runtimeStatus?.last_received_at ? new Date(runtimeStatus.last_received_at * 1000).toLocaleString() : '暂无')}
                     </TableCell>
                   </TableRow>
                 </TableBody>
@@ -701,13 +701,13 @@ function SendSyncDialogForm({
 function StatusBadge({ status, text }: { status: 'idle' | 'ok' | 'error' | 'disabled'; text: string }) {
   const base = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium';
   if (status === 'ok') {
-    return <span className={`${base} bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300`}>{text}</span>;
+    return <span className={`${base} bg-success/15 text-success`}>{text}</span>;
   }
   if (status === 'error') {
-    return <span className={`${base} bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300`}>{text}</span>;
+    return <span className={`${base} bg-destructive/15 text-destructive`}>{text}</span>;
   }
   if (status === 'disabled') {
-    return <span className={`${base} bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400`}>{text}</span>;
+    return <span className={`${base} bg-muted text-muted-foreground`}>{text}</span>;
   }
   return <span className={`${base} bg-muted text-muted-foreground`}>{text}</span>;
 }

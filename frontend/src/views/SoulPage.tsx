@@ -77,7 +77,7 @@ export default function SoulPage() {
               </Button>
               <Button onClick={handleSave} disabled={saving}>
                 <Save className="mr-2 h-4 w-4" />
-                {saving ? '保存中...' : '保存'}
+                {saving ? '保存中…' : '保存'}
               </Button>
             </div>
           )}
@@ -91,7 +91,7 @@ export default function SoulPage() {
               onChange={(e) => setContent(e.target.value)}
               rows={24}
               className="font-mono text-sm"
-              placeholder="在此输入 SOUL.md 内容..."
+              placeholder="在此输入 SOUL.md 内容…"
             />
           ) : (
             <div className="whitespace-pre-wrap font-mono text-sm min-h-[300px] p-4 rounded-md bg-muted/50">
