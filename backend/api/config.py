@@ -23,7 +23,7 @@ class SectionUpdate(BaseModel):
 
 
 def yaml_service(request: Request) -> YamlService:
-    return YamlService()
+    return YamlService(request.app.state.settings.hermes_home)
 
 
 @router.get("")

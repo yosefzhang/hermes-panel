@@ -12,7 +12,7 @@ router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 
 def profile_service(request: Request) -> ProfileService:
-    return ProfileService()
+    return ProfileService(request.app.state.settings.hermes_home)
 
 
 class ProfileInfoResponse(BaseModel):

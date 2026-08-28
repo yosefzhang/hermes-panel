@@ -67,6 +67,7 @@ config.yaml
 
 # 测试和覆盖率
 .pytest_cache/
+.pytest_tmp/
 .coverage
 htmlcov/
 .nyc_output/

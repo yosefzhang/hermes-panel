@@ -35,7 +35,7 @@ class ProfileFileUpdate(BaseModel):
 
 
 def profile_service(request: Request) -> ProfileService:
-    return ProfileService()
+    return ProfileService(request.app.state.settings.hermes_home)
 
 
 _EDITABLE_FILES = {"SOUL.md", "soul.md", "USER.md", "MEMORY.md"}

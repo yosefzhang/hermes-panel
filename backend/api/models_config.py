@@ -803,6 +803,125 @@ def create_provider(
     return {"ok": True, "mode": payload.mode, "name": entry_name, "key_env": env_key}
 
 
+class ProviderUpdatePayload(BaseModel):
+    """更新（或新增）自定义 Provider 的请求体。
+
+    密钥值通过 ``api_key`` 传递：当 ``key_env`` 存在时写入 .env 中该变量，
+    否则回退为 custom_providers 条目里的 inline ``api_key``。
+    """
+    name: str
+    base_url: str
+    key_env: str = ""
+    api_key: str = ""
+    api_mode: str | None = None
+    default_model: str | None = None
+    context_length: int | None = None
+    rate_limit_delay: float | None = None
+
+
+@router.put("/providers/{name}")
+def update_provider(
+    name: str,
+    payload: ProviderUpdatePayload,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    yaml_svc: YamlService = Depends(yaml_service),
+):
+    """更新（不存在时新增）自定义 Provider，并把密钥值写入 .env。
+
+    编辑模型列表中的「API 密钥」时，仅更新 config 的 inline api_key 不会生效，
+    因为实际密钥解析优先取 .env 中 key_env 指向的变量。因此这里统一把密钥
+    持久化到 .env，保证编辑后确实改变。
+    """
+    profile_name = ensure_profile_access(user, profile)
+    env_svc = EnvService(yaml_svc.profiles.hermes_home)
+
+    new_name = payload.name.strip()
+    base_url = payload.base_url.strip()
+    key_env = payload.key_env.strip()
+    api_key = payload.api_key or ""
+
+    if not new_name:
+        raise HTTPException(status_code=400, detail="name 不能为空")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="base_url 不能为空")
+
+    config = yaml_svc.read_config(profile_name)
+    custom_list = config.get("custom_providers", []) if isinstance(config, dict) else []
+    if not isinstance(custom_list, list):
+        custom_list = []
+
+    original_lower = name.strip().lower()
+    idx = next(
+        (
+            i
+            for i, item in enumerate(custom_list)
+            if isinstance(item, dict) and str(item.get("name", "")).strip().lower() == original_lower
+        ),
+        None,
+    )
+    if any(
+        i != idx
+        and isinstance(item, dict)
+        and str(item.get("name", "")).strip().lower() == new_name.lower()
+        for i, item in enumerate(custom_list)
+    ):
+        raise HTTPException(status_code=400, detail=f"供应商 '{new_name}' 已存在")
+
+    old_entry = custom_list[idx] if idx is not None else {}
+    old_key_env = str(old_entry.get("key_env", "") or "") if isinstance(old_entry, dict) else ""
+
+    entry: dict[str, Any] = {**old_entry} if isinstance(old_entry, dict) else {}
+    entry["name"] = new_name
+    entry["base_url"] = base_url
+
+    if key_env:
+        entry["key_env"] = key_env
+        entry.pop("api_key", None)
+    else:
+        entry.pop("key_env", None)
+        if api_key:
+            entry["api_key"] = api_key
+        else:
+            entry.pop("api_key", None)
+
+    if payload.api_mode:
+        entry["api_mode"] = payload.api_mode.strip()
+    else:
+        entry.pop("api_mode", None)
+    if payload.default_model:
+        entry["default_model"] = payload.default_model.strip()
+    else:
+        entry.pop("default_model", None)
+    if payload.context_length is not None:
+        entry["context_length"] = payload.context_length
+    else:
+        entry.pop("context_length", None)
+    if payload.rate_limit_delay is not None:
+        entry["rate_limit_delay"] = payload.rate_limit_delay
+    else:
+        entry.pop("rate_limit_delay", None)
+
+    # 密钥持久化：key_env 存在时写入 .env，否则使用 inline api_key
+    if key_env:
+        if api_key:
+            env_svc.set_env_var(profile_name, key_env, api_key)
+        else:
+            env_svc.delete_env_var(profile_name, key_env)
+        if old_key_env and old_key_env != key_env:
+            env_svc.delete_env_var(profile_name, old_key_env)
+    elif old_key_env:
+        env_svc.delete_env_var(profile_name, old_key_env)
+
+    if idx is not None:
+        custom_list[idx] = entry
+    else:
+        custom_list.append(entry)
+
+    yaml_svc.write_section(profile_name, "custom_providers", custom_list)
+    return {"ok": True, "name": new_name, "key_env": key_env}
+
+
 def _registry_lookup_by_name(provider_name: str) -> tuple[str, dict[str, Any]] | None:
     """按预设名从 provider registry 反查 (env_key, provider_meta)。
 

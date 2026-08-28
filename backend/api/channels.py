@@ -32,6 +32,8 @@ CHANNEL_ENV_MARKERS: dict[str, str] = {
     "telegram": "TELEGRAM_BOT_TOKEN",
     "discord": "DISCORD_BOT_TOKEN",
     "slack": "SLACK_BOT_TOKEN",
+    "mattermost": "MATTERMOST_TOKEN",
+    "matrix": "MATRIX_ACCESS_TOKEN",
 }
 # 部分渠道还可能有备选标识
 CHANNEL_ENV_ALT_MARKERS: dict[str, list[str]] = {
@@ -54,6 +56,32 @@ CHANNEL_ENV_FIELDS: dict[str, list[str]] = {
     "telegram": ["TELEGRAM_BOT_TOKEN"],
     "discord": ["DISCORD_BOT_TOKEN"],
     "slack": ["SLACK_BOT_TOKEN"],
+    "mattermost": ["MATTERMOST_TOKEN", "MATTERMOST_URL"],
+    "matrix": ["MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID"],
+}
+
+# config.yaml 渠道字段名 → Hermes .env 变量名（密钥/连接凭据类字段）。
+# Hermes 实际从 .env 读取这些值（见 hermes_cli 的 required_env / get_env_value），
+# 若只写进 config.yaml 不会生效，因此编辑渠道时必须把这些字段落到 .env。
+CHANNEL_CREDENTIAL_ENV_MAP: dict[str, dict[str, str]] = {
+    "telegram": {"token": "TELEGRAM_BOT_TOKEN"},
+    "discord": {"token": "DISCORD_BOT_TOKEN"},
+    "slack": {"token": "SLACK_BOT_TOKEN"},
+    "mattermost": {"token": "MATTERMOST_TOKEN"},
+    "matrix": {
+        "homeserver": "MATRIX_HOMESERVER",
+        "access_token": "MATRIX_ACCESS_TOKEN",
+    },
+    "feishu": {
+        "app_id": "FEISHU_APP_ID",
+        "app_secret": "FEISHU_APP_SECRET",
+        "verification_token": "FEISHU_VERIFICATION_TOKEN",
+        "encrypt_key": "FEISHU_ENCRYPT_KEY",
+    },
+    "weixin": {
+        "token": "WEIXIN_TOKEN",
+        "encoding_aes_key": "WEIXIN_ENCODING_AES_KEY",
+    },
 }
 
 
@@ -277,12 +305,28 @@ def update_channel(
     service: YamlService = Depends(yaml_service),
 ):
     safe_profile = ensure_profile_access(user, profile)
+
+    # 密钥/连接凭据类字段必须写入 .env（Hermes 从 .env 读取，写 config.yaml 不生效），
+    # 其余字段（enabled、行为开关等）保留在 config.yaml。
+    config_payload: dict[str, Any] = dict(payload)
+    env_updates: dict[str, str | None] = {}
+    for field, env_var in CHANNEL_CREDENTIAL_ENV_MAP.get(name, {}).items():
+        if field not in config_payload:
+            continue
+        value = config_payload.pop(field)
+        env_updates[env_var] = value if (isinstance(value, str) and value.strip()) else None
+
+    if env_updates:
+        env_svc = EnvService(hermes_home=service.profiles.hermes_home)
+        env_svc.write_env(safe_profile, env_updates)
+
     config = service.read_config(safe_profile)
     if not isinstance(config, dict):
         config = {}
 
-    _write_channel_to_config(config, name, payload)
-    service.write_config(safe_profile, config)
+    if config_payload:
+        _write_channel_to_config(config, name, config_payload)
+        service.write_config(safe_profile, config)
     return {"ok": True}
 
 

@@ -40,10 +40,25 @@ const ENV_FIELDS: Record<string, Array<{ key: string; label: string; password?: 
   feishu: [
     { key: 'FEISHU_APP_ID', label: 'App ID' },
     { key: 'FEISHU_APP_SECRET', label: 'App Secret', password: true },
+    { key: 'FEISHU_VERIFICATION_TOKEN', label: 'Verification Token' },
+    { key: 'FEISHU_ENCRYPT_KEY', label: 'Encrypt Key', password: true },
   ],
   weixin: [
     { key: 'WEIXIN_ACCOUNT_ID', label: 'Account ID' },
-    { key: 'WEIXIN_TOKEN', label: 'Token' },
+    { key: 'WEIXIN_TOKEN', label: 'Token', password: true },
+    { key: 'WEIXIN_ENCODING_AES_KEY', label: 'Encoding AES Key', password: true },
+  ],
+  telegram: [{ key: 'TELEGRAM_BOT_TOKEN', label: 'Bot Token', password: true }],
+  discord: [{ key: 'DISCORD_BOT_TOKEN', label: 'Bot Token', password: true }],
+  slack: [{ key: 'SLACK_BOT_TOKEN', label: 'Bot Token', password: true }],
+  mattermost: [
+    { key: 'MATTERMOST_TOKEN', label: 'Bot Token', password: true },
+    { key: 'MATTERMOST_URL', label: 'Server URL' },
+  ],
+  matrix: [
+    { key: 'MATRIX_HOMESERVER', label: 'Homeserver' },
+    { key: 'MATRIX_ACCESS_TOKEN', label: 'Access Token', password: true },
+    { key: 'MATRIX_USER_ID', label: 'User ID' },
   ],
 };
 
@@ -58,6 +73,9 @@ export default function ChannelsConfig() {
   const [deleteTarget, setDeleteTarget] = useState<{ type: string; isEnv: boolean } | null>(null);
 
   const [envValues, setEnvValues] = useState<Record<string, Record<string, string>>>({});
+  const [envEditOpen, setEnvEditOpen] = useState(false);
+  const [editingEnvChannel, setEditingEnvChannel] = useState<string | null>(null);
+  const [envSaving, setEnvSaving] = useState(false);
 
   const fetchChannels = useCallback(
     (force?: boolean) =>
@@ -166,15 +184,26 @@ export default function ChannelsConfig() {
     }
   };
 
-  const handleEnvSave = async (type: string) => {
-    const values = envValues[type];
-    if (!values) return;
+  const handleEnvEdit = (type: string) => {
+    setEditingEnvChannel(type);
+    setEnvEditOpen(true);
+  };
+
+  const handleEnvSave = async () => {
+    if (!editingEnvChannel) return;
+    const type = editingEnvChannel;
+    const values = envValues[type] ?? {};
+    setEnvSaving(true);
     try {
       await apiClient.put(`/channels/${type}/env`, values, { params: { profile: activeProfile } });
       toast({ title: '成功', description: `${type} 环境变量已保存` });
+      setEnvEditOpen(false);
+      setEditingEnvChannel(null);
       reload(true);
     } catch {
       toast({ variant: 'destructive', title: '错误', description: '保存失败' });
+    } finally {
+      setEnvSaving(false);
     }
   };
 
@@ -251,7 +280,7 @@ export default function ChannelsConfig() {
               <CardDescription>{def?.description}</CardDescription>
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="sm" onClick={() => handleEdit(row.type)}>
+              <Button variant="ghost" size="sm" onClick={() => handleEnvEdit(row.type)}>
                 <Pencil className="h-4 w-4 mr-1" />
                 编辑
               </Button>
@@ -411,6 +440,44 @@ export default function ChannelsConfig() {
     );
   };
 
+  const renderEnvEditDialog = () => {
+    if (!editingEnvChannel) return null;
+    const def = CHANNEL_TYPES.find((c) => c.type === editingEnvChannel);
+    const envFields = ENV_FIELDS[editingEnvChannel] ?? [];
+
+    return (
+      <Dialog open={envEditOpen} onOpenChange={(open) => { if (!open) { setEnvEditOpen(false); setEditingEnvChannel(null); } }}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>编辑 {def?.label ?? editingEnvChannel} 环境变量</DialogTitle>
+            <DialogDescription>通过 .env 环境变量配置，修改后立即写入对应 Profile 的 .env 文件</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {envFields.map((f) => (
+              <div key={f.key} className="grid grid-cols-[180px_1fr] gap-3 items-center">
+                <Label className="text-muted-foreground">{f.label}</Label>
+                <Input
+                  type={f.password ? 'password' : 'text'}
+                  value={envValues[editingEnvChannel]?.[f.key] ?? ''}
+                  placeholder={f.password ? '••••••••' : '未设置'}
+                  onChange={(e) => updateEnvValue(editingEnvChannel, f.key, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setEnvEditOpen(false); setEditingEnvChannel(null); }}>
+              取消
+            </Button>
+            <Button onClick={handleEnvSave} disabled={envSaving}>
+              {envSaving ? '保存中…' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
   const renderAddDialog = () => (
     <Dialog open={modalOpen && !editingChannel} onOpenChange={(open) => { if (!open) setModalOpen(false); }}>
       <DialogContent className="max-w-md">
@@ -482,6 +549,7 @@ export default function ChannelsConfig() {
 
       {renderAddDialog()}
       {renderEditDialog()}
+      {renderEnvEditDialog()}
     </PageContainer>
   );
 }

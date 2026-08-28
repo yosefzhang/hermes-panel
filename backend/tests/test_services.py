@@ -25,6 +25,19 @@ def test_env_service_updates_values(tmp_path: Path):
     }
 
 
+def test_env_service_deletes_var(tmp_path: Path):
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    env_path = hermes_home / ".env"
+    env_path.write_text("# keep\nAPI_KEY=sk-original\nNORMAL=value\n", encoding="utf-8")
+
+    service = EnvService(hermes_home)
+    service.delete_env_var("default", "API_KEY")
+
+    assert env_path.read_text(encoding="utf-8") == "# keep\nNORMAL=value\n"
+    assert service.read_env("default") == {"NORMAL": "value"}
+
+
 def test_yaml_service_preserves_comments_and_writes_section(tmp_path: Path):
     hermes_home = tmp_path / ".hermes"
     hermes_home.mkdir()

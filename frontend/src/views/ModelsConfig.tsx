@@ -138,6 +138,7 @@ function ProvidersTab({
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  const [editOriginalName, setEditOriginalName] = useState<string>('');
   const [editData, setEditData] = useState<any>(null);
   // ── 新增流程（预设 / 自定义） ──
   const [createOpen, setCreateOpen] = useState(false);
@@ -223,43 +224,6 @@ function ProvidersTab({
     loadData();
   }, [loadData]);
 
-  const saveCustomProviders = async (items: any[]) => {
-    try {
-      const clean = items
-        .filter((item) => item.name && item.base_url)
-        .map((item) => ({
-          ...item,
-          name: item.name?.trim() || '',
-          base_url: item.base_url?.trim() || '',
-          key_env: item.key_env?.trim() || '',
-          api_key: item.api_key || '',
-          api_mode: item.api_mode?.trim() || '',
-          default_model: item.default_model?.trim() || '',
-          model: item.model ?? '',
-          context_length:
-            item.context_length === '' || item.context_length == null
-              ? undefined
-              : Number(item.context_length) || undefined,
-          rate_limit_delay:
-            item.rate_limit_delay === '' || item.rate_limit_delay == null
-              ? undefined
-              : Number(item.rate_limit_delay) || undefined,
-        }));
-      await apiClient.put('/models/custom_providers', clean, { params: { profile: activeProfile } });
-      toast({
-        title: '成功',
-        description: '已保存',
-      });
-      loadData(true);
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: '错误',
-        description: '保存失败',
-      });
-    }
-  };
-
   const openCreate = () => {
     setEditIndex(null);
     setCreateMode('preset');
@@ -279,17 +243,23 @@ function ProvidersTab({
 
   const openEdit = (row: ProviderInfo) => {
     const idx = customItems.findIndex((c) => c.name === row.name);
+    const actualKey = row.api_key_value ?? row.api_key ?? '';
     setEditIndex(idx >= 0 ? idx : null);
-    setEditData(idx >= 0 ? customItems[idx] : {
-      name: row.name,
-      base_url: row.base_url,
-      key_env: row.key_env,
-      api_key: row.api_key ?? '',
-      api_mode: row.api_mode || '',
-      default_model: row.default_model ?? '',
-      context_length: row.context_length ?? '',
-      rate_limit_delay: row.rate_limit_delay ?? '',
-    });
+    setEditOriginalName(row.name);
+    if (idx >= 0) {
+      setEditData({ ...customItems[idx], api_key: actualKey });
+    } else {
+      setEditData({
+        name: row.name,
+        base_url: row.base_url,
+        key_env: row.key_env,
+        api_key: actualKey,
+        api_mode: row.api_mode || '',
+        default_model: row.default_model ?? '',
+        context_length: row.context_length ?? '',
+        rate_limit_delay: row.rate_limit_delay ?? '',
+      });
+    }
     setEditOpen(true);
   };
 
@@ -322,19 +292,40 @@ function ProvidersTab({
       return;
     }
 
-    const next = [...customItems];
-    if (editIndex == null) {
-      const existingIdx = next.findIndex((item) => item.name === editData.name);
-      if (existingIdx >= 0) {
-        next[existingIdx] = { ...next[existingIdx], ...editData };
-      } else {
-        next.push(editData);
-      }
-    } else {
-      next[editIndex] = { ...next[editIndex], ...editData };
+    const contextLength =
+      editData.context_length === '' || editData.context_length == null
+        ? null
+        : Number(editData.context_length) || null;
+    const rateLimitDelay =
+      editData.rate_limit_delay === '' || editData.rate_limit_delay == null
+        ? null
+        : Number(editData.rate_limit_delay) || null;
+
+    try {
+      await apiClient.put(
+        `/models/providers/${encodeURIComponent(editOriginalName)}`,
+        {
+          name: editData.name?.trim() || '',
+          base_url: editData.base_url?.trim() || '',
+          key_env: editData.key_env?.trim() || '',
+          api_key: editData.api_key || '',
+          api_mode: editData.api_mode?.trim() || '',
+          default_model: editData.default_model?.trim() || '',
+          context_length: contextLength,
+          rate_limit_delay: rateLimitDelay,
+        },
+        { params: { profile: activeProfile } },
+      );
+      toast({ title: '成功', description: '已保存' });
+      setEditOpen(false);
+      loadData(true);
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: '错误',
+        description: error?.response?.data?.detail || '保存失败',
+      });
     }
-    await saveCustomProviders(next);
-    setEditOpen(false);
   };
 
   const handleCreateSubmit = async () => {

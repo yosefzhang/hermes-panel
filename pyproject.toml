@@ -33,6 +33,10 @@ dev = [
 testpaths = ["backend/tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# 所有测试产生的缓存与临时文件都限定在 test 目录内，避免污染项目根或用户真实配置目录。
+cache_dir = "backend/tests/.pytest_cache"
+# --basetemp 让 tmp_path/tmp_path_factory 的临时文件也落在 test 目录内（需在项目根运行）。
+addopts = "--basetemp=backend/tests/.pytest_tmp"
 
 [tool.ruff]
 line-length = 100
