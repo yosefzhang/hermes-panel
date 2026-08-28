@@ -21,6 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Table,
   TableBody,
@@ -55,6 +57,7 @@ interface ModelsData {
     default?: string;
     provider?: string;
     base_url?: string;
+    api_mode?: string;
     context_length?: number;
   };
   auxiliary: Record<string, any>;
@@ -95,6 +98,9 @@ interface ProviderInfo {
   default_model?: string;
   context_length?: number;
   rate_limit_delay?: number;
+  discover_models?: boolean | null;
+  models?: string[];
+  extra_headers?: Record<string, string>;
   has_key: boolean;
 }
 
@@ -107,20 +113,43 @@ const API_MODE_OPTIONS = [
   { value: 'codex_app_server', label: 'codex_app_server' },
 ];
 
+// 模型清单 ↔ 多行文本（每行一个模型 id）
+function modelIdsToText(ids?: string[]): string {
+  return (ids ?? []).join('\n');
+}
+function textToModelIds(text?: string): string[] {
+  return (text ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+}
+// extra_headers ↔ 多行文本（每行 Key: Value）
+function headersToText(headers?: Record<string, string>): string {
+  return Object.entries(headers ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+}
+function textToHeaders(text?: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  (text ?? '').split('\n').forEach((line) => {
+    const idx = line.indexOf(':');
+    if (idx <= 0) return;
+    const k = line.slice(0, idx).trim();
+    const v = line.slice(idx + 1).trim();
+    if (k) out[k] = v;
+  });
+  return out;
+}
+
 const AUX_LABELS: Record<string, string> = {
-  vision: '视觉分析(Vision)',
-  compression: '上下文压缩(Compression)',
-  web_extract: '网页提取(Web Extract)',
-  approval: '命令审批(Approval)',
-  mcp: 'MCP 管理(MCP)',
-  title_generation: '标题生成(Title Generation)',
-  memory_query_rewrite: '记忆查询重写(Memory Query Rewrite)',
-  tts_audio_tags: 'TTS 标签(TTS Audio Tags)',
-  skills_hub: '技能中心(Skills Hub)',
-  triage_specifier: '看板分诊指定(Triage Specifier)',
-  kanban_decomposer: '看板任务分解(Kanban Decomposer)',
-  profile_describer: 'Profile 描述(Profile Describer)',
-  curator: '后台维护(Curator)',
+  vision: '视觉分析 (Vision)',
+  compression: '上下文压缩 (Compression)',
+  web_extract: '网页提取 (Web Extract)',
+  approval: '命令审批 (Approval)',
+  mcp: 'MCP 管理 (MCP)',
+  title_generation: '标题生成 (Title Generation)',
+  memory_query_rewrite: '记忆查询重写 (Memory Query Rewrite)',
+  tts_audio_tags: 'TTS 标签 (TTS Audio Tags)',
+  skills_hub: '技能中心 (Skills Hub)',
+  triage_specifier: '看板分诊指定 (Triage Specifier)',
+  kanban_decomposer: '看板任务分解 (Kanban Decomposer)',
+  profile_describer: 'Profile 描述 (Profile Describer)',
+  curator: '后台维护 (Curator)',
 };
 
 function ProvidersTab({
@@ -247,7 +276,24 @@ function ProvidersTab({
     setEditIndex(idx >= 0 ? idx : null);
     setEditOriginalName(row.name);
     if (idx >= 0) {
-      setEditData({ ...customItems[idx], api_key: actualKey });
+      const raw = customItems[idx];
+      setEditData({
+        ...raw,
+        api_key: actualKey,
+        api_mode: raw.api_mode || '',
+        default_model: raw.default_model ?? raw.model ?? '',
+        context_length: raw.context_length ?? '',
+        rate_limit_delay: raw.rate_limit_delay ?? '',
+        discover_models: raw.discover_models ?? true,
+        models_text: modelIdsToText(
+          Array.isArray(raw.models)
+            ? raw.models
+            : raw.models && typeof raw.models === 'object'
+              ? Object.keys(raw.models)
+              : [],
+        ),
+        headers_text: headersToText(raw.extra_headers),
+      });
     } else {
       setEditData({
         name: row.name,
@@ -258,6 +304,9 @@ function ProvidersTab({
         default_model: row.default_model ?? '',
         context_length: row.context_length ?? '',
         rate_limit_delay: row.rate_limit_delay ?? '',
+        discover_models: row.discover_models ?? true,
+        models_text: modelIdsToText(row.models),
+        headers_text: headersToText(row.extra_headers),
       });
     }
     setEditOpen(true);
@@ -313,6 +362,9 @@ function ProvidersTab({
           default_model: editData.default_model?.trim() || '',
           context_length: contextLength,
           rate_limit_delay: rateLimitDelay,
+          discover_models: editData.discover_models !== false,
+          models: textToModelIds(editData.models_text),
+          extra_headers: textToHeaders(editData.headers_text),
         },
         { params: { profile: activeProfile } },
       );
@@ -502,6 +554,7 @@ function ProvidersTab({
                 <TableRow>
                   <TableHead>供应商</TableHead>
                   <TableHead>Base URL</TableHead>
+                  <TableHead>API Mode</TableHead>
                   <TableHead>密钥</TableHead>
                   <TableHead>操作</TableHead>
                 </TableRow>
@@ -509,7 +562,7 @@ function ProvidersTab({
               <TableBody>
                 {providers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
                       暂无供应商配置
                     </TableCell>
                   </TableRow>
@@ -519,6 +572,13 @@ function ProvidersTab({
                       <TableCell className="font-medium">{row.display_name || row.name}</TableCell>
                       <TableCell title={row.base_url || (row.source === 'env' ? '(默认地址)' : '—')}>
                         {row.base_url || (row.source === 'env' ? '(默认地址)' : '—')}
+                      </TableCell>
+                      <TableCell>
+                        {row.api_mode ? (
+                          <Badge variant="secondary" className="text-xs font-mono">{row.api_mode}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">自动</span>
+                        )}
                       </TableCell>
                       <TableCell
                         className="font-mono text-xs max-w-[280px] truncate"
@@ -669,7 +729,7 @@ function ProvidersTab({
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editIndex !== null ? '编辑供应商' : '新增供应商'}</DialogTitle>
             <DialogDescription>
@@ -715,6 +775,28 @@ function ProvidersTab({
               />
             </div>
             <div className="grid gap-2">
+              <Label htmlFor="edit_api_mode">API Mode（可选）</Label>
+              <Select
+                value={editData?.api_mode || ''}
+                onValueChange={(value) => setEditData({ ...editData, api_mode: value })}
+              >
+                <SelectTrigger id="edit_api_mode">
+                  <SelectValue placeholder="留空由 Hermes 自动判定" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">自动（默认）</SelectItem>
+                  {API_MODE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                线协议：chat_completions / anthropic_messages / codex_responses 等。留空时 Hermes 按 provider 与 base_url 自动推断。
+              </p>
+            </div>
+            <div className="grid gap-2">
               <Label htmlFor="default_model">默认模型</Label>
               <Input
                 id="default_model"
@@ -745,6 +827,44 @@ function ProvidersTab({
                 onChange={(e) => setEditData({ ...editData, rate_limit_delay: e.target.value })}
                 placeholder="例如：0.5（可选）"
               />
+            </div>
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="discover_models">自动发现模型</Label>
+                <Switch
+                  id="discover_models"
+                  checked={editData?.discover_models !== false}
+                  onCheckedChange={(checked) => setEditData({ ...editData, discover_models: checked })}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                关闭后 Hermes 不再请求该供应商的 /models 列表，只用下方静态模型清单。适用于列表慢或不准确的网关。
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="models_text">静态模型清单（每行一个模型 ID）</Label>
+              <Textarea
+                id="models_text"
+                rows={4}
+                className="font-mono text-xs"
+                value={editData?.models_text || ''}
+                onChange={(e) => setEditData({ ...editData, models_text: e.target.value })}
+                placeholder={'oc/qwen3.8-flash\noc/glm-5.2'}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="headers_text">附加请求头（每行 Key: Value）</Label>
+              <Textarea
+                id="headers_text"
+                rows={3}
+                className="font-mono text-xs"
+                value={editData?.headers_text || ''}
+                onChange={(e) => setEditData({ ...editData, headers_text: e.target.value })}
+                placeholder={'CF-Access-Client-Id: xxx.access\nCF-Access-Client-Secret: yyyy'}
+              />
+              <p className="text-xs text-muted-foreground">
+                随每次请求附带，适合反代/网关鉴权。仅 OpenAI 兼容线路生效（anthropic_messages 不生效）。
+              </p>
             </div>
           </div>
           <DialogFooter>
@@ -893,6 +1013,28 @@ function ProvidersTab({
                   />
                 </div>
                 <div className="grid gap-2">
+                  <Label htmlFor="create_api_mode">API Mode（可选）</Label>
+                  <Select
+                    value={createData.api_mode || ''}
+                    onValueChange={(value) => setCreateData({ ...createData, api_mode: value })}
+                  >
+                    <SelectTrigger id="create_api_mode">
+                      <SelectValue placeholder="留空由 Hermes 自动判定" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">自动（默认）</SelectItem>
+                      {API_MODE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    留空时 Hermes 按 provider 与 base_url 自动推断线协议。
+                  </p>
+                </div>
+                <div className="grid gap-2">
                   <Label htmlFor="default_model">默认模型（可选）</Label>
                   <Input
                     id="default_model"
@@ -961,6 +1103,7 @@ function MainModelTab({
     provider: '',
     model: '',
     context_length: 0,
+    api_mode: '',
   });
 
   const loadProviders = useCallback(async () => {
@@ -1016,6 +1159,7 @@ function MainModelTab({
       provider: modelData.provider || '',
       model: modelData.default || '',
       context_length: modelData.context_length || 0,
+      api_mode: modelData.api_mode || '',
     });
     setEditOpen(true);
   };
@@ -1027,6 +1171,7 @@ function MainModelTab({
         provider: formData.provider || undefined,
         default: formData.model || undefined,
         context_length: formData.context_length || undefined,
+        api_mode: formData.api_mode || '',
       });
       toast({
         title: '成功',
@@ -1074,6 +1219,10 @@ function MainModelTab({
             <TableRow>
               <TableCell className="font-medium">Base URL</TableCell>
               <TableCell>{selectedProvider?.value || modelData.base_url || '—'}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="font-medium">API Mode</TableCell>
+              <TableCell>{modelData.api_mode || '自动'}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell className="font-medium">上下文长度</TableCell>
@@ -1127,6 +1276,28 @@ function MainModelTab({
                 </SelectContent>
               </Select>
               {modelError && <p className="text-xs text-amber-600">{modelError}</p>}
+            </div>
+            <div className="grid gap-2">
+              <Label>API Mode</Label>
+              <Select
+                value={formData.api_mode}
+                onValueChange={(value) => setFormData({ ...formData, api_mode: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="留空由 Hermes 自动判定" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">自动（默认）</SelectItem>
+                  {API_MODE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                线协议，留空时 Hermes 按 provider 与 base_url 自动推断；切换供应商时会重置为自动。
+              </p>
             </div>
             <div className="grid gap-2">
               <Label>上下文长度</Label>
@@ -1294,13 +1465,13 @@ function AuxTab({
           </Button>
         </CardHeader>
         <CardContent>
-          <Table>
+          <Table className="w-full table-auto">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[20%]">子模块</TableHead>
-                <TableHead className="w-[20%]">供应商</TableHead>
-                <TableHead className="w-[45%]">模型</TableHead>
-                <TableHead className="w-[15%]">超时(秒)</TableHead>
+                <TableHead className="whitespace-nowrap">子模块</TableHead>
+                <TableHead className="whitespace-nowrap">供应商</TableHead>
+                <TableHead className="w-auto">模型</TableHead>
+                <TableHead className="whitespace-nowrap">超时 (秒)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

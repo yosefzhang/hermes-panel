@@ -53,10 +53,39 @@ def update_model_section(
     user: User = Depends(get_current_user),
     service: YamlService = Depends(yaml_service),
 ):
-    """更新 model / auxiliary / fallback_providers 中的某一个 section"""
+    """更新 model / auxiliary / fallback_providers 中的某一个 section
+
+    ``model`` section 采用**合并写入**：前端表单只编辑 provider/default/context_length/
+    api_mode 等少数字段，整体替换会把 model section 里其它 Hermes 认识的字段
+    （base_url、max_tokens、auth_mode…）静默删掉。provider 变更时沿用 Hermes
+    clear_model_endpoint_credentials 语义，清掉旧端点残留的 api_key/api/api_mode。
+    """
     if section not in MODEL_SECTIONS:
         raise HTTPException(status_code=400, detail=f"Invalid section: {section}")
-    service.write_section(ensure_profile_access(user, profile), section, payload)
+    profile_name = ensure_profile_access(user, profile)
+    if isinstance(payload, dict) and section == "model":
+        config = service.read_config(profile_name)
+        existing = config.get("model") if isinstance(config, dict) else None
+        if not isinstance(existing, dict):
+            existing = {}
+        merged: dict[str, Any] = {**existing, **payload}
+        provider_changed = str(existing.get("provider") or "") != str(payload.get("provider") or "")
+        explicit_mode = "api_mode" in payload and bool(str(payload.get("api_mode") or "").strip())
+        if "api_mode" in payload:
+            mode = str(payload.get("api_mode") or "").strip()
+            if mode:
+                merged["api_mode"] = mode
+            else:
+                merged.pop("api_mode", None)
+        if provider_changed and not explicit_mode:
+            # 切换 provider 且未显式指定新 api_mode 时，清除旧端点残留字段
+            # （与 Hermes clear_model_endpoint_credentials 行为一致）
+            merged.pop("api_mode", None)
+            merged.pop("api_key", None)
+            merged.pop("api", None)
+        service.write_section(profile_name, "model", merged)
+        return {"ok": True, "section": section}
+    service.write_section(profile_name, section, payload)
     return {"ok": True, "section": section}
 
 
@@ -243,6 +272,17 @@ def _collect_providers_from_config_and_env(
         if not actual_key:
             actual_key = str(cp.get("api_key") or "")
         is_active = (cname == active_provider_name)
+        raw_models = cp.get("models")
+        if isinstance(raw_models, dict):
+            model_ids = [str(k) for k in raw_models.keys()]
+        elif isinstance(raw_models, list):
+            model_ids = [
+                (m if isinstance(m, str) else str(m.get("id") or m.get("name") or ""))
+                for m in raw_models
+            ]
+            model_ids = [m for m in model_ids if m]
+        else:
+            model_ids = []
         result.append({
             "name": cname,
             "source": "custom",
@@ -254,6 +294,9 @@ def _collect_providers_from_config_and_env(
             "default_model": str(cp.get("default_model") or cp.get("model") or ""),
             "context_length": cp.get("context_length"),
             "rate_limit_delay": cp.get("rate_limit_delay"),
+            "discover_models": cp.get("discover_models"),
+            "models": model_ids,
+            "extra_headers": cp.get("extra_headers") or {},
             "has_key": bool(env_vars.get(key_env)) if key_env else bool(cp.get("api_key")),
             "is_active": is_active,
         })
@@ -808,6 +851,9 @@ class ProviderUpdatePayload(BaseModel):
 
     密钥值通过 ``api_key`` 传递：当 ``key_env`` 存在时写入 .env 中该变量，
     否则回退为 custom_providers 条目里的 inline ``api_key``。
+
+    ``discover_models`` / ``models`` / ``extra_headers`` 为 Hermes 认识的进阶字段：
+    关闭自动发现后可用静态模型清单，extra_headers 用于网关/反代的自定义请求头。
     """
     name: str
     base_url: str
@@ -817,6 +863,9 @@ class ProviderUpdatePayload(BaseModel):
     default_model: str | None = None
     context_length: int | None = None
     rate_limit_delay: float | None = None
+    discover_models: bool | None = None
+    models: list[str] | None = None
+    extra_headers: dict[str, str] | None = None
 
 
 @router.put("/providers/{name}")
@@ -891,8 +940,12 @@ def update_provider(
         entry.pop("api_mode", None)
     if payload.default_model:
         entry["default_model"] = payload.default_model.strip()
+        # Hermes 解析时 legacy ``model`` 键优先于 ``default_model``；若旧条目残留
+        # ``model``，用户编辑的 default_model 会被静默忽略，必须同步清掉。
+        entry.pop("model", None)
     else:
         entry.pop("default_model", None)
+        entry.pop("model", None)
     if payload.context_length is not None:
         entry["context_length"] = payload.context_length
     else:
@@ -901,6 +954,29 @@ def update_provider(
         entry["rate_limit_delay"] = payload.rate_limit_delay
     else:
         entry.pop("rate_limit_delay", None)
+
+    # 进阶字段：payload 未传（None）时保留 old_entry 原值（entry 已 {**old_entry} 继承）
+    if payload.discover_models is not None:
+        if payload.discover_models:
+            entry.pop("discover_models", None)  # true 是 Hermes 默认，不写盘
+        else:
+            entry["discover_models"] = False
+    if payload.models is not None:
+        model_ids = [m.strip() for m in payload.models if isinstance(m, str) and m.strip()]
+        if model_ids:
+            entry["models"] = {mid: {} for mid in model_ids}
+        else:
+            entry.pop("models", None)
+    if payload.extra_headers is not None:
+        headers = {
+            str(k).strip(): str(v)
+            for k, v in payload.extra_headers.items()
+            if str(k).strip()
+        }
+        if headers:
+            entry["extra_headers"] = headers
+        else:
+            entry.pop("extra_headers", None)
 
     # 密钥持久化：key_env 存在时写入 .env，否则使用 inline api_key
     if key_env:
