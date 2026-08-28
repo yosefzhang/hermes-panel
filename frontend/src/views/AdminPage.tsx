@@ -394,7 +394,7 @@ function ModelsTab({
 }) {
   const { toast } = useToast();
   const [source, setSource] = useState('');
-  const [scope, setScope] = useState('全部模型配置');
+  const [scope, setScope] = useState<string[]>(['全部模型配置']);
 
   useEffect(() => {
     if (!source && profiles.length > 0) {
@@ -413,7 +413,12 @@ function ModelsTab({
       toast({ variant: 'destructive', title: '未选择目标 profile', description: '请先选择要覆盖的 profile' });
       return;
     }
-    const sections = MODELS_SCOPE.find((o) => o.label === scope)?.sections ?? MODEL_COPY_SECTIONS;
+    const scopes = MODELS_SCOPE.filter((o) => scope.includes(o.label));
+    const sections = [...new Set(scopes.flatMap((o) => o.sections))];
+    if (sections.length === 0) {
+      toast({ variant: 'destructive', title: '未选择同步范围', description: '请至少选择一个同步范围' });
+      return;
+    }
     onRun('同步模型配置', () => api.adminModelsCopy(selected, source, sections));
   };
 
@@ -453,12 +458,15 @@ function ModelsTab({
           </div>
 
           <div className="grid gap-2">
-            <span className="text-sm text-muted-foreground">同步范围</span>
+            <span className="text-sm text-muted-foreground">同步范围（可多选）</span>
             <Select
+              mode="multiple"
               value={scope}
-              onChange={(v) => setScope(v as string)}
+              onChange={(v) => setScope(v as string[])}
               options={MODELS_SCOPE.map((o) => ({ label: o.label, value: o.label }))}
               style={{ width: '100%' }}
+              allowClear
+              placeholder="选择要同步的配置范围"
             />
           </div>
 

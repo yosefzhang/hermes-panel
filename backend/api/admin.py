@@ -23,6 +23,7 @@ from backend.auth.dependencies import require_admin
 from backend.db.models import User
 from backend.services.audit_log import log_audit_event
 from backend.services.cli_utils import atomic_write_text
+from backend.services.env_service import EnvService
 from backend.services.gateway_service import GatewayService
 from backend.services.profile_service import ProfileService
 from backend.services.yaml_service import YamlService
@@ -147,6 +148,20 @@ def _apply_model_copy(
     yaml_svc: YamlService, source: str, profiles: list[str], sections: list[str]
 ) -> list[dict]:
     source_config = yaml_svc.read_config(source)
+    # 收集同步范围内会带走的 provider 密钥环境变量（key_env 指向 .env）。
+    # inline api_key 随 custom_providers section 一并复制，无需单独处理。
+    env_svc = EnvService(yaml_svc.profiles.hermes_home)
+    source_env = env_svc.read_env(source)
+    key_envs_to_copy: set[str] = set()
+    if "custom_providers" in sections and isinstance(source_config, dict):
+        cp_list = source_config.get("custom_providers", [])
+        if isinstance(cp_list, list):
+            for cp in cp_list:
+                if isinstance(cp, dict):
+                    key_env = str(cp.get("key_env") or "").strip()
+                    if key_env and source_env.get(key_env):
+                        key_envs_to_copy.add(key_env)
+
     results: list[dict] = []
     for profile in profiles:
         try:
@@ -158,11 +173,20 @@ def _apply_model_copy(
             for section in sections:
                 value = source_config.get(section) if isinstance(source_config, dict) else None
                 yaml_svc.write_section(profile, section, value)
+            # 把源 profile 的 provider 密钥写入目标 .env（只写被同步用到的变量）
+            if key_envs_to_copy:
+                updates: dict[str, str | None] = {k: source_env[k] for k in key_envs_to_copy}
+                env_svc.write_env(profile, updates)
+            copied_note = (
+                f"已复制 {len(sections)} 个 section，密钥 {len(key_envs_to_copy)} 个"
+                if key_envs_to_copy
+                else f"已复制 {len(sections)} 个 section"
+            )
             results.append(
                 {
                     "profile": profile,
                     "success": True,
-                    "message": f"已复制 {len(sections)} 个 section",
+                    "message": copied_note,
                 }
             )
         except Exception as exc:  # noqa: BLE001
