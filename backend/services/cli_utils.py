@@ -86,6 +86,10 @@ def get_clean_env(hermes_home: str | Path | None = None) -> dict[str, str]:
     """
     env = os.environ.copy()
     env.pop("HERMES_PROFILE", None)
+    # 清除 gateway 内部标记：panel 是独立服务，其 gateway 操作应视为「外部 shell」。
+    # 否则当 panel 由 gateway 内启动（继承 _HERMES_GATEWAY=1）时，`hermes gateway
+    # restart/stop` 子进程会被误判为「从 gateway 内部重启」而直接拦截（防重启循环）。
+    env.pop("_HERMES_GATEWAY", None)
     if hermes_home is None:
         hermes_home = _base_hermes_home()
     env["HERMES_HOME"] = str(hermes_home)
