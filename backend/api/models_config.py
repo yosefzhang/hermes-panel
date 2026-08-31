@@ -403,7 +403,7 @@ _MULTIMODAL_KEYWORDS = ("vision", "vl", "multimodal", "audio", "tts", "embedding
 
 def _is_multimodal(item: Any, mid: str) -> bool:
     if isinstance(item, dict):
-        for key in ("multimodal", "supports_multimodal", "vision"):
+        for key in ("multimodal", "supports_multimodal", "supports_vision", "vision"):
             val = item.get(key)
             if isinstance(val, bool):
                 return val
@@ -432,7 +432,7 @@ def _normalize_model_item(item: Any) -> dict[str, Any]:
             "id": mid_str,
             "name": str(item.get("name") or item.get("owned_by") or mid),
             "owned_by": str(item.get("owned_by") or ""),
-            "context_length": item.get("context_length"),
+            "context_length": item.get("context_length") or item.get("context_window"),
             "output_length": output_length,
             "created": item.get("created"),
             "multimodal": _is_multimodal(item, mid_str),
