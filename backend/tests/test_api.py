@@ -17,7 +17,7 @@ def make_client(tmp_path: Path) -> TestClient:
     (hermes_home / "memories" / "MEMORY.md").write_text("# memory\n", encoding="utf-8")
     settings = Settings(
         hermes_home=hermes_home,
-        hermes_panel_db_path=tmp_path / "hermes-panel.db",
+        data_dir=tmp_path / "data",
         log_file_path=tmp_path / "hermes-panel.log",
         default_admin_password="admin-test-password",
         jwt_secret="test-secret-for-hermes-panel-tests-min-32-bytes",
@@ -146,7 +146,7 @@ def test_update_provider_writes_key_to_env_and_preserves_models(tmp_path: Path):
     # 密钥应写入 .env 中 key_env 指向的变量，而不是 config.yaml 的 inline api_key
     assert (hermes / ".env").read_text(encoding="utf-8") == "DEEPSEEK_API_KEY=sk-new-secret\n"
 
-    from backend.services.yaml_service import YamlService
+    from backend.services.profile import YamlService
 
     providers = YamlService(hermes).read_section("default", "custom_providers")
     assert providers[0]["models"] == ["deepseek-chat"]
@@ -196,7 +196,7 @@ def test_update_channel_writes_credentials_to_env_not_config(tmp_path: Path):
     # 凭据写入 .env
     assert (hermes / ".env").read_text(encoding="utf-8") == "TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234gh\n"
 
-    from backend.services.yaml_service import YamlService
+    from backend.services.profile import YamlService
 
     config = YamlService(hermes).read_config("default")
     # 非凭据字段写入 config.yaml，凭据字段不残留
@@ -229,7 +229,7 @@ def test_update_channel_feishu_writes_multiple_credentials_to_env(tmp_path: Path
     assert "FEISHU_APP_SECRET=secret-123\n" in env_content
     assert "FEISHU_ENCRYPT_KEY=enc-456\n" in env_content
 
-    from backend.services.yaml_service import YamlService
+    from backend.services.profile import YamlService
 
     config = YamlService(hermes).read_config("default")
     feishu = config.get("feishu", {})
@@ -260,7 +260,7 @@ def test_create_provider_custom_writes_key_to_env(tmp_path: Path):
     assert response.status_code == 201
     assert (hermes / ".env").read_text(encoding="utf-8") == "MY_GATEWAY_API_KEY=sk-abc\n"
 
-    from backend.services.yaml_service import YamlService
+    from backend.services.profile import YamlService
 
     providers = YamlService(hermes).read_section("default", "custom_providers")
     assert providers[0]["name"] == "my-gateway"

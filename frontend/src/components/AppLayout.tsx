@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -13,14 +13,12 @@ import {
   LogOut,
   Menu,
   MessageCircle,
-  Puzzle,
-  Server,
   Settings,
   ShieldCheck,
   Wrench,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import { HostProfileGroup, useConfigStore } from '../store/configStore';
+import { useConfigStore } from '../store/configStore';
 import { profileCategories } from '../config/profileCategories';
 
 interface HeaderContextValue {
@@ -59,7 +57,6 @@ const categoryIcons: Record<string, React.ElementType> = {
   models: Brain,
   channels: MessageCircle,
   skills: Wrench,
-  plugins: Puzzle,
   memory: Database,
   soul: BookOpen,
 };
@@ -81,65 +78,27 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const { user, logout } = useAuthStore();
-  const { profiles, hostProfiles, loadProfiles, loadHostProfiles } = useConfigStore();
+  const { profiles, loadProfiles } = useConfigStore();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [expandedHosts, setExpandedHosts] = useState<Set<string>>(new Set());
   const [expandedProfiles, setExpandedProfiles] = useState<Set<string>>(new Set());
   const [headerExtra, setHeaderExtra] = useState<React.ReactNode>(null);
   const [headerDescription, setHeaderDescription] = useState<string | null>(null);
 
   useEffect(() => {
     loadProfiles().catch(() => undefined);
-    loadHostProfiles().catch(() => undefined);
-  }, [loadProfiles, loadHostProfiles]);
+  }, [loadProfiles]);
 
   const isGlobalActive = (path: string) => pathname === path;
   const pathMatch = pathname.match(/^\/([^/]+)\/([^/]+)/);
   const currentProfile = pathMatch?.[1] ?? null;
   const currentCategory = pathMatch?.[2] ?? null;
 
-  const sidebarHosts = useMemo<HostProfileGroup[]>(() => {
-    if (hostProfiles.length > 0) return hostProfiles;
-    return [
-      {
-        id: '__local_fallback__',
-        name: '本机',
-        isLocal: true,
-        online: true,
-        profiles,
-      },
-    ];
-  }, [hostProfiles, profiles]);
-
-  const activeHost = useMemo(() => {
-    if (!currentProfile) return null;
-    const local = sidebarHosts.find((h) => h.isLocal && h.profiles.includes(currentProfile));
-    if (local) return local;
-    return sidebarHosts.find((h) => h.profiles.includes(currentProfile)) ?? null;
-  }, [sidebarHosts, currentProfile]);
-
-  // Auto-expand the active host/profile, and the local host by default
+  // Auto-expand the active profile
   useEffect(() => {
-    if (activeHost) {
-      setExpandedHosts((prev) => new Set(prev).add(activeHost.id));
-    }
     if (currentProfile) {
       setExpandedProfiles((prev) => new Set(prev).add(currentProfile));
     }
-    const localHost = hostProfiles.find((h) => h.isLocal);
-    if (localHost) {
-      setExpandedHosts((prev) => new Set(prev).add(localHost.id));
-    }
-  }, [activeHost, currentProfile, hostProfiles]);
-
-  const toggleHost = (hostId: string) => {
-    setExpandedHosts((prev) => {
-      const next = new Set(prev);
-      if (next.has(hostId)) next.delete(hostId);
-      else next.add(hostId);
-      return next;
-    });
-  };
+  }, [currentProfile]);
 
   const toggleProfile = (profile: string) => {
     setExpandedProfiles((prev) => {
@@ -184,45 +143,48 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </button>
             );
           })}
+          {user?.role === 'admin' && (
+            <button
+              onClick={() => handleNavClick('/admin')}
+              className={[
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-200',
+                isGlobalActive('/admin')
+                  ? 'bg-primary/10 text-primary shadow-sm'
+                  : 'text-muted-foreground hover:bg-card/60 hover:text-foreground',
+              ].join(' ')}
+            >
+              <ShieldCheck className="h-[18px] w-[18px] shrink-0" />
+              控制台
+            </button>
+          )}
         </nav>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 pb-4">
         <div className="space-y-1">
-          {sidebarHosts.map((host) => {
-            const isExpandedHost = expandedHosts.has(host.id);
-            const isActiveHost = activeHost?.id === host.id;
+          {profiles.map((profile) => {
+            const isActiveProfile = currentProfile === profile;
+            const isExpandedProfile = expandedProfiles.has(profile);
             return (
-              <div key={host.id}>
+              <div key={profile}>
                 <button
-                  onClick={() => toggleHost(host.id)}
+                  onClick={() => toggleProfile(profile)}
                   className={[
-                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-200',
-                    isActiveHost && !currentProfile
-                      ? 'bg-primary/10 text-primary shadow-sm'
-                      : 'text-muted-foreground hover:bg-card/60 hover:text-foreground',
+                    'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors duration-200',
+                    isActiveProfile && !currentCategory
+                      ? 'bg-primary/10 text-primary font-medium shadow-sm'
+                      : 'text-muted-foreground hover:bg-card/50 hover:text-foreground',
                   ].join(' ')}
                 >
-                  <span
-                    className={[
-                      'h-2.5 w-2.5 rounded-full shrink-0',
-                      host.online ? 'bg-success' : 'bg-destructive',
-                    ].join(' ')}
-                  />
-                  <span className="flex-1 text-left truncate">{host.name}</span>
-                  {host.isLocal && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
-                      本地
-                    </span>
-                  )}
-                  {isExpandedHost ? (
-                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  <span className="flex-1 text-left truncate">{profile}</span>
+                  {isExpandedProfile ? (
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                   ) : (
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                   )}
                 </button>
                 <AnimatePresence initial={false}>
-                  {isExpandedHost && (
+                  {isExpandedProfile && (
                     <motion.div
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
@@ -231,79 +193,23 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                       className="overflow-hidden"
                     >
                       <div className="ml-2 mt-1 space-y-1 border-l border-border pl-2">
-                        {host.isLocal && user?.role === 'admin' && (
-                          <button
-                            onClick={() => handleNavClick('/admin')}
-                            className={[
-                              'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors duration-200',
-                              isGlobalActive('/admin')
-                                ? 'bg-primary/10 text-primary font-medium shadow-sm'
-                                : 'text-muted-foreground hover:bg-card/50 hover:text-foreground',
-                            ].join(' ')}
-                          >
-                            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-                            <span className="flex-1 text-left">控制台</span>
-                          </button>
-                        )}
-                        {host.profiles.map((profile) => {
-                          const isActiveProfile = currentProfile === profile && isActiveHost;
-                          const isExpandedProfile = expandedProfiles.has(profile);
+                        {profileCategories.map((category) => {
+                          const active = isActiveProfile && currentCategory === category.key;
+                          const CatIcon = categoryIcons[category.key] ?? Settings;
                           return (
-                            <div key={profile}>
-                              <button
-                                onClick={() => host.isLocal && toggleProfile(profile)}
-                                className={[
-                                  'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors duration-200',
-                                  isActiveProfile && !currentCategory
-                                    ? 'bg-primary/10 text-primary font-medium shadow-sm'
-                                    : host.isLocal
-                                      ? 'text-muted-foreground hover:bg-card/50 hover:text-foreground'
-                                      : 'text-muted-foreground/60 cursor-default',
-                                ].join(' ')}
-                              >
-                                <span className="flex-1 text-left truncate">{profile}</span>
-                                {host.isLocal && (
-                                  isExpandedProfile ? (
-                                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                                  ) : (
-                                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                                  )
-                                )}
-                              </button>
-                              <AnimatePresence initial={false}>
-                                {host.isLocal && isExpandedProfile && (
-                                  <motion.div
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: 'auto', opacity: 1 }}
-                                    exit={{ height: 0, opacity: 0 }}
-                                    transition={{ duration: 0.2 }}
-                                    className="overflow-hidden"
-                                  >
-                                    <div className="ml-2 mt-1 space-y-1 border-l border-border pl-2">
-                                      {profileCategories.map((category) => {
-                                        const active = isActiveProfile && currentCategory === category.key;
-                                        const CatIcon = categoryIcons[category.key] ?? Settings;
-                                        return (
-                                          <button
-                                            key={category.key}
-                                            onClick={() => handleNavClick(`/${profile}/${category.key}`)}
-                                            className={[
-                                              'w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors duration-200',
-                                              active
-                                                ? 'bg-primary/10 text-primary font-medium shadow-sm'
-                                                : 'text-muted-foreground hover:bg-card/50 hover:text-foreground',
-                                            ].join(' ')}
-                                          >
-                                            <CatIcon className="h-3.5 w-3.5 shrink-0" />
-                                            {category.label}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
+                            <button
+                              key={category.key}
+                              onClick={() => handleNavClick(`/${profile}/${category.key}`)}
+                              className={[
+                                'w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors duration-200',
+                                active
+                                  ? 'bg-primary/10 text-primary font-medium shadow-sm'
+                                  : 'text-muted-foreground hover:bg-card/50 hover:text-foreground',
+                              ].join(' ')}
+                            >
+                              <CatIcon className="h-3.5 w-3.5 shrink-0" />
+                              {category.label}
+                            </button>
                           );
                         })}
                       </div>

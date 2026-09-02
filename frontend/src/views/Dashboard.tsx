@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts';
 import {
@@ -6,16 +6,19 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   BarChart3,
-  CheckCircle2,
-  Layers,
   MessageSquare,
-  Server,
   Target,
   TrendingUp,
   Zap,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useApi } from '../hooks/useApi';
 import { api } from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -25,11 +28,8 @@ import ErrorAlert from '../components/ErrorAlert';
 
 interface ProfileStat {
   id: number;
-  server_id: string;
-  host: string | null;
   profile_name: string;
   path: string | null;
-  gateway_status: string | null;
   session_count: number;
   total_tokens: number;
   total_input_tokens: number;
@@ -39,20 +39,21 @@ interface ProfileStat {
   provider_top5: Array<{ provider: string; total_tokens: number; sessions: number }>;
   daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
   updated_at: number;
-}
-
-interface ServerInfo {
-  id: string;
-  name: string;
-  host: string | null;
-  is_local: boolean;
-  online: boolean;
-  profiles: ProfileStat[];
+  source: 'local' | 'remote';
+  panel_name: string | null;
 }
 
 interface DashboardData {
-  servers: ServerInfo[];
+  profiles: ProfileStat[];
 }
+
+const RANGE_OPTIONS = [
+  { value: '7d', label: '近 7 天' },
+  { value: '30d', label: '近 30 天' },
+  { value: 'all', label: '总统计' },
+] as const;
+
+type RangeValue = (typeof RANGE_OPTIONS)[number]['value'];
 
 function fmt(n: number | null | undefined): string {
   if (n == null) return '—';
@@ -61,32 +62,34 @@ function fmt(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
-const CHART_COLORS = ['#3b82f6', '#06b6d4', '#8b5cf6', '#f59e0b', '#ef4444', '#94a3b8'];
+function profileLabel(p: ProfileStat): string {
+  return p.source === 'remote' && p.panel_name ? `${p.profile_name}（${p.panel_name}）` : p.profile_name;
+}
 
 function useDashboardStats(data: DashboardData | null) {
   return useMemo(() => {
-    const allProfiles = (data?.servers ?? []).flatMap((s) => s.profiles);
+    const allProfiles = data?.profiles ?? [];
 
-    const hostCount = data?.servers.length ?? 0;
-    const profileCount = allProfiles.length;
-    const runningProfiles = allProfiles.filter((p) => p.gateway_status === 'running').length;
     const totalTokens = allProfiles.reduce((sum, p) => sum + p.total_tokens, 0);
     const totalInputTokens = allProfiles.reduce((sum, p) => sum + p.total_input_tokens, 0);
     const totalOutputTokens = allProfiles.reduce((sum, p) => sum + p.total_output_tokens, 0);
     const totalSessions = allProfiles.reduce((sum, p) => sum + p.session_count, 0);
+    const profileCount = allProfiles.length;
     const avgCacheHitRate =
       profileCount > 0
         ? allProfiles.reduce((sum, p) => sum + p.cache_hit_rate, 0) / profileCount
         : 0;
 
+    // Token 使用量 Top5（按 profile 汇总）
     const profileRank = [...allProfiles]
       .sort((a, b) => b.total_tokens - a.total_tokens)
       .slice(0, 5)
       .map((p) => ({
-        name: p.profile_name,
+        name: profileLabel(p),
         value: p.total_tokens,
       }));
 
+    // 模型使用量 Top5（跨 profile 合并 model_top5）
     const modelUsage: Record<string, number> = {};
     for (const p of allProfiles) {
       for (const m of p.model_top5 ?? []) {
@@ -98,42 +101,22 @@ function useDashboardStats(data: DashboardData | null) {
       .slice(0, 5)
       .map(([name, value]) => ({ name, value }));
 
-    const today = new Date().toISOString().slice(0, 10);
-    const todayTop5 = [...allProfiles]
-      .map((p) => {
-        const found = p.daily_tokens?.find((d) => d.day === today);
-        return { name: p.profile_name, value: found?.total_tokens ?? 0 };
-      })
-      .filter((p) => p.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
-
-    // Last 15 days token trend (aggregated across all profiles)
-    const days: string[] = [];
-    for (let i = 14; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      days.push(d.toISOString().slice(0, 10));
-    }
-    const dailyTrend = days.map((day) => {
-      let total = 0;
-      let input = 0;
-      let output = 0;
-      for (const p of allProfiles) {
-        const found = p.daily_tokens?.find((d) => d.day === day);
-        if (found) {
-          total += found.total_tokens ?? 0;
-          input += found.input_tokens ?? 0;
-          output += found.output_tokens ?? 0;
-        }
+    // Token 用量趋势：跨 profile 按日汇总（数据已由后端按范围过滤）
+    const dayMap: Record<string, { total_tokens: number; input_tokens: number; output_tokens: number }> = {};
+    for (const p of allProfiles) {
+      for (const d of p.daily_tokens ?? []) {
+        const entry = dayMap[d.day] ?? { total_tokens: 0, input_tokens: 0, output_tokens: 0 };
+        entry.total_tokens += d.total_tokens ?? 0;
+        entry.input_tokens += d.input_tokens ?? 0;
+        entry.output_tokens += d.output_tokens ?? 0;
+        dayMap[d.day] = entry;
       }
-      return { day, total_tokens: total, input_tokens: input, output_tokens: output };
-    });
+    }
+    const dailyTrend = Object.keys(dayMap)
+      .sort()
+      .map((day) => ({ day, ...dayMap[day] }));
 
     return {
-      hostCount,
-      profileCount,
-      runningProfiles,
       totalTokens,
       totalInputTokens,
       totalOutputTokens,
@@ -141,7 +124,6 @@ function useDashboardStats(data: DashboardData | null) {
       avgCacheHitRate,
       profileRank,
       modelTop5,
-      todayTop5,
       dailyTrend,
     };
   }, [data]);
@@ -170,26 +152,6 @@ function MetricCard({ metric }: { metric: MetricItem }) {
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function MetricGroup({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: React.ElementType;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-3">
-      <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground/80">
-        <Icon className="h-4 w-4 text-muted-foreground" />
-        {title}
-      </h3>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">{children}</div>
-    </div>
   );
 }
 
@@ -240,7 +202,7 @@ function RankChartCard({ data }: { data: { name: string; value: number }[] }) {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2">
           <BarChart3 className="h-4 w-4 text-primary" />
-          总 Token 使用量 Top5
+          Token 使用量 Top5
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -319,69 +281,6 @@ function ModelTop5Card({ data }: { data: { name: string; value: number }[] }) {
   );
 }
 
-function TodayTop5Card({ data }: { data: { name: string; value: number }[] }) {
-  const option = useMemo(
-    () => ({
-      tooltip: {
-        trigger: 'axis' as const,
-        axisPointer: { type: 'shadow' as const },
-        formatter: (params: Array<{ name: string; value: number }>) => {
-          const p = params[0];
-          return `${p.name}<br/>${fmt(p.value)} tokens`;
-        },
-      },
-      grid: { left: 16, right: 24, top: 16, bottom: 24, containLabel: true },
-      xAxis: {
-        type: 'value' as const,
-        splitLine: { lineStyle: { color: '#f1f5f9' } },
-        axisLabel: { formatter: (v: number) => fmt(v), color: '#64748b' },
-      },
-      yAxis: {
-        type: 'category' as const,
-        data: data.map((d) => d.name).reverse(),
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: { color: '#475569', fontSize: 11 },
-      },
-      series: [
-        {
-          type: 'bar',
-          data: data.map((d) => d.value).reverse(),
-          itemStyle: {
-            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-              { offset: 0, color: '#a78bfa' },
-              { offset: 1, color: '#7c3aed' },
-            ]),
-            borderRadius: [0, 6, 6, 0] as unknown as number,
-          },
-          barMaxWidth: 20,
-        },
-      ],
-    }),
-    [data]
-  );
-
-  return (
-    <Card className="h-full flex flex-col">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2">
-          <Zap className="h-4 w-4 text-primary" />
-          今日 Token 使用量 Top5
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {data.length > 0 ? (
-          <ReactECharts option={option} style={{ height: '100%', minHeight: 260 }} />
-        ) : (
-          <div className="h-full min-h-[260px] flex items-center justify-center text-sm text-muted-foreground">
-            暂无数据
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 interface DailyTrendPoint {
   day: string;
   total_tokens: number;
@@ -389,7 +288,7 @@ interface DailyTrendPoint {
   output_tokens: number;
 }
 
-function DailyTrendCard({ data }: { data: DailyTrendPoint[] }) {
+function DailyTrendCard({ title, data }: { title: string; data: DailyTrendPoint[] }) {
   const hasData = data.some((d) => d.total_tokens > 0);
   const option = useMemo(
     () => ({
@@ -439,7 +338,7 @@ function DailyTrendCard({ data }: { data: DailyTrendPoint[] }) {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-primary" />
-          近 15 日 Token 用量趋势
+          {title}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -456,9 +355,12 @@ function DailyTrendCard({ data }: { data: DailyTrendPoint[] }) {
 }
 
 export default function Dashboard() {
-  const fetchDashboard = useCallback(() => api.profileStats(), []);
-  const { data, loading, error } = useApi<DashboardData>(fetchDashboard, []);
+  const [range, setRange] = useState<RangeValue>('30d');
+  const fetchDashboard = useCallback(() => api.profileStats(range), [range]);
+  const { data, loading, error } = useApi<DashboardData>(fetchDashboard, [range]);
   const stats = useDashboardStats(data);
+
+  const rangeLabel = RANGE_OPTIONS.find((opt) => opt.value === range)?.label ?? '总统计';
 
   if (error) {
     return (
@@ -470,105 +372,79 @@ export default function Dashboard() {
 
   return (
     <PageContainer>
-      <PageHeader />
+      <PageHeader
+        extra={
+          <Select value={range} onValueChange={(value) => setRange(value as RangeValue)}>
+            <SelectTrigger className="w-[130px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RANGE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        }
+      />
 
       {loading && <Loading className="py-12" />}
 
       {!loading && data && (
-        <div className="space-y-8">
-          {/* Metrics + Today top5 side by side */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-            <div className="space-y-6">
-              {/* Infrastructure */}
-              <MetricGroup title="基础设施" icon={Server}>
-                <MetricCard
-                  metric={{
-                    icon: Server,
-                    label: '主机数',
-                    value: String(stats.hostCount),
-                    iconClass: 'bg-primary/10 text-primary',
-                  }}
-                />
-                <MetricCard
-                  metric={{
-                    icon: Layers,
-                    label: 'Profile 数',
-                    value: String(stats.profileCount),
-                    iconClass: 'bg-indigo-100 text-indigo-600',
-                  }}
-                />
-                <MetricCard
-                  metric={{
-                    icon: CheckCircle2,
-                    label: '网关正常运行',
-                    value: String(stats.runningProfiles),
-                    iconClass: 'bg-success/15 text-success',
-                  }}
-                />
-              </MetricGroup>
-
-              {/* Token usage */}
-              <MetricGroup title="Token 用量" icon={Zap}>
-                <MetricCard
-                  metric={{
-                    icon: Zap,
-                    label: '总 Token',
-                    value: fmt(stats.totalTokens),
-                    iconClass: 'bg-primary/10 text-primary',
-                  }}
-                />
-                <MetricCard
-                  metric={{
-                    icon: ArrowDownToLine,
-                    label: '总输入',
-                    value: fmt(stats.totalInputTokens),
-                    iconClass: 'bg-blue-100 text-blue-600',
-                  }}
-                />
-                <MetricCard
-                  metric={{
-                    icon: ArrowUpFromLine,
-                    label: '总输出',
-                    value: fmt(stats.totalOutputTokens),
-                    iconClass: 'bg-fuchsia-100 text-fuchsia-600',
-                  }}
-                />
-              </MetricGroup>
-
-              {/* Activity & performance */}
-              <MetricGroup title="活动与性能" icon={Activity}>
-                <MetricCard
-                  metric={{
-                    icon: MessageSquare,
-                    label: '总会话数',
-                    value: fmt(stats.totalSessions),
-                    iconClass: 'bg-purple-100 text-purple-600',
-                  }}
-                />
-                <MetricCard
-                  metric={{
-                    icon: Target,
-                    label: '平均缓存命中率',
-                    value: `${stats.avgCacheHitRate.toFixed(1)}%`,
-                    iconClass: 'bg-amber-100 text-amber-600',
-                  }}
-                />
-              </MetricGroup>
-            </div>
-
-            <div className="h-full min-h-[360px]">
-              <TodayTop5Card data={stats.todayTop5} />
-            </div>
+        <div className="space-y-6">
+          {/* 小单元卡片：一行展示核心指标 */}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+            <MetricCard
+              metric={{
+                icon: MessageSquare,
+                label: '会话数',
+                value: fmt(stats.totalSessions),
+                iconClass: 'bg-purple-100 text-purple-600',
+              }}
+            />
+            <MetricCard
+              metric={{
+                icon: Zap,
+                label: 'Tokens 用量',
+                value: fmt(stats.totalTokens),
+                iconClass: 'bg-primary/10 text-primary',
+              }}
+            />
+            <MetricCard
+              metric={{
+                icon: ArrowDownToLine,
+                label: '输入 Tokens',
+                value: fmt(stats.totalInputTokens),
+                iconClass: 'bg-blue-100 text-blue-600',
+              }}
+            />
+            <MetricCard
+              metric={{
+                icon: ArrowUpFromLine,
+                label: '输出 Tokens',
+                value: fmt(stats.totalOutputTokens),
+                iconClass: 'bg-fuchsia-100 text-fuchsia-600',
+              }}
+            />
+            <MetricCard
+              metric={{
+                icon: Target,
+                label: '平均缓存命中率',
+                value: `${stats.avgCacheHitRate.toFixed(1)}%`,
+                iconClass: 'bg-amber-100 text-amber-600',
+              }}
+            />
           </div>
 
-          {/* Charts row */}
+          {/* 图表：Token 使用量 Top5 与模型使用量 Top5 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <RankChartCard data={stats.profileRank} />
             <ModelTop5Card data={stats.modelTop5} />
           </div>
 
-          {/* Daily trend */}
-          <DailyTrendCard data={stats.dailyTrend} />
+          {/* Token 用量趋势 */}
+          <DailyTrendCard title={`Token 用量趋势（${rangeLabel}）`} data={stats.dailyTrend} />
         </div>
       )}
     </PageContainer>

@@ -2,22 +2,22 @@
 
 ## 项目定位
 
-Hermes Panel 是 Hermes Agent 的 Web 管理面板。它提供登录鉴权、Profile 管理、配置编辑、模型与渠道配置、Skills/Plugins 管理、Gateway 控制、Token 用量、主机版本信息和跨 Panel 数据同步。
+Hermes Panel 是 Hermes Agent 的 Web 管理面板。它提供登录鉴权、Profile 管理、配置编辑、模型与渠道配置、Skills/Plugins 管理、Gateway 控制、Token 用量和跨 Panel 数据同步。
 
 ## 技术栈
 
-- 后端：Python 3.11+、FastAPI、Uvicorn、Pydantic Settings、SQLite、`ruamel.yaml`
+- 后端：Python 3.11+、FastAPI、Uvicorn、Pydantic Settings、JSON 文件存储、`ruamel.yaml`
 - 前端：React 18、TypeScript、Vite、Tailwind CSS v4、Zustand、ECharts、Ant Design、Radix/shadcn UI
 - 数据源：当前用户的 Hermes 数据目录，默认 `~/.hermes`
-- 后端数据库：默认 `~/.config/hermes-panel/hermes-panel.db`
-- CLI 集成：通过本机 `hermes` 可执行文件执行 Gateway、Memory、Skills、Plugins 和配置版本检查
+- 后端数据目录：默认 `./data/`（users.json、local_profiles.json、`<panel_name>_profiles.json`、audit.log）
+- CLI 集成：通过本机 `hermes` 可执行文件执行 Gateway、Memory、Skills、Plugins
 
 ## 目录结构
 
 - `backend/main.py`：FastAPI 应用、生命周期、静态文件服务和后台采集任务
 - `backend/api/`：按功能拆分的 API 路由
 - `backend/services/`：Hermes CLI、Profile、统计、同步和配置等业务逻辑
-- `backend/db/`：SQLite schema、迁移和数据模型
+- `backend/db/`：JSON/JSONL 存储层和数据模型
 - `backend/tests/`：后端测试
 - `frontend/src/App.tsx`：前端路由和认证入口
 - `frontend/src/pages/`：页面级功能
@@ -46,13 +46,13 @@ make stop             # 停止开发和生产端口上的服务
 
 ## 配置规则
 
-配置文件固定为 `~/.config/hermes-panel/config.yaml`，不存在时由 `config.yaml.example` 自动生成。Panel 配置只从 YAML 读取，不提供环境变量覆盖，也不兼容旧配置格式。
+配置文件默认位于当前工作目录 `config.yaml`（本地开发即项目根目录），Docker 中由 docker-compose 挂载宿主机 `./config.yaml` 到容器 `/app/config.yaml` 持久化；文件缺失时启动会自动生成最小化初始配置。数据目录由 `HERMES_PANEL_DATA_DIR` 指定（默认 `./data`）。Panel 配置项本身只从 YAML 读取，不提供环境变量覆盖，也不兼容旧配置格式。
 
 常用配置：
 
 ```yaml
 hermes_path: ~/.hermes
-db_path: ~/.config/hermes-panel/hermes-panel.db
+data_dir: ./data
 port: 8090
 
 sync:
@@ -71,18 +71,17 @@ sync:
 
 ## 数据和后台任务
 
-- Hermes 文件和 CLI 操作使用 `hermes_path` 指向的数据目录，不要把面板数据库写入 Hermes 的 state 数据库。
-- Panel 自有数据写入 SQLite 的 `host_info` 和 `profile_info` 等表。
+- Hermes 文件和 CLI 操作使用 `hermes_path` 指向的数据目录，不要把面板自己的数据写入 Hermes 的 state 数据库。
+- Panel 自有数据写入 `data_dir` 下的 JSON/JSONL 文件（`users.json`、`local_profiles.json`、`<panel_name>_profiles.json`、`audit.log`）。
 - 服务启动时执行一次完整本机采集。
-- Profile 快速统计默认每 10 分钟更新，完整统计和主机版本信息默认每 1 小时更新。
-- 超过 24 小时未更新的主机/Profile 记录会自动清理。
-- 不要在请求处理器中绕过已有 service 直接修改 SQLite，优先复用对应 service。
+- Profile 快速统计默认每 10 分钟更新，完整统计默认每 1 小时更新。
+- 超过 24 小时未更新的 Profile 记录会自动清理。
+- 不要在请求处理器中绕过已有 service 直接读写这些文件，优先复用对应 service。
 
 ## 修改约定
 
 - 先阅读相邻 service、API 路由和页面，再做局部修改。
 - 保持 API 字段和配置命名一致；同步配置必须区分 `send` 与 `receive`。
-- 版本查询失败时保留已配置组件的字段，使用 `null` 表示未知，不要静默删除列。
 - HTTPS 同步请求必须保留证书校验，不要使用 `verify=False` 或跳过 CA 验证。
 - 前端页面使用已有的组件、`useApi` 和 API client；不要重复创建请求缓存或布局。
 - 不要提交 `.venv/`、`frontend/dist/`、缓存、凭据、Token 或本地配置文件。

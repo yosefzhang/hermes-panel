@@ -1,20 +1,714 @@
+"""Hermes 文件与配置相关的 API 路由。
+
+涵盖 config.yaml / .env / 记忆文件、profile 发现、渠道、skills、
+模型与 provider 配置，以及跨 profile 的批量管理。
+"""
 from __future__ import annotations
 
 import json
+import logging
+import re
+import shutil
+import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 
-from backend.api.config import yaml_service
-from backend.auth.dependencies import ensure_profile_access, get_current_user
-from backend.db.models import User
-from backend.services.env_service import EnvService
-from backend.services.yaml_service import YamlService
+from backend.auth import (
+    ensure_profile_access,
+    get_accessible_profiles,
+    get_current_user,
+    require_admin,
+)
+from backend.config import get_settings
+from backend.services.profile import (
+    EnvService,
+    ProfileService,
+    SkillService,
+    YamlService,
+    atomic_write_text,
+)
+from backend.services.system import log_audit_event
+from backend.store import User
+
+logger = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/models", tags=["models"])
+# ── 共享依赖 ────────────────────────────────────────────────────────────────
+
+
+def yaml_service(request: Request) -> YamlService:
+    return YamlService(request.app.state.settings.hermes_home)
+
+
+def profile_service(request: Request) -> ProfileService:
+    return ProfileService(request.app.state.settings.hermes_home)
+
+
+def skill_service(request: Request) -> SkillService:
+    return SkillService()
+
+
+# ── /config ────────────────────────────────────────────────────────────────
+
+config_router = APIRouter(prefix="/config", tags=["config"])
+
+
+class RawConfigUpdate(BaseModel):
+    content: str
+
+
+class SectionUpdate(BaseModel):
+    section: str
+    payload: dict[str, Any]
+
+
+@config_router.get("")
+async def get_config(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    profile_name = ensure_profile_access(user, profile)
+    return service.read_config(profile_name)
+
+
+@config_router.get("/sections")
+async def list_sections(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    profile_name = ensure_profile_access(user, profile)
+    return {"sections": service.list_sections(profile_name)}
+
+
+@config_router.get("/sections/{name}")
+async def get_section(
+    name: str,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    profile_name = ensure_profile_access(user, profile)
+    return service.read_section(profile_name, name)
+
+
+@config_router.put("/sections/{name}")
+async def update_section(
+    name: str,
+    payload: dict[str, Any],
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    profile_name = ensure_profile_access(user, profile)
+    service.write_section(profile_name, name, payload)
+    return {"ok": True, "section": name}
+
+
+@config_router.get("/raw")
+async def get_raw_config(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    profile_name = ensure_profile_access(user, profile)
+    return {"content": service.read_raw(profile_name)}
+
+
+@config_router.put("/raw")
+async def update_raw_config(
+    payload: RawConfigUpdate,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    profile_name = ensure_profile_access(user, profile)
+    service.write_raw(profile_name, payload.content)
+    return {"ok": True}
+
+
+# ── /profile-files ──────────────────────────────────────────────────────────
+
+profile_files_router = APIRouter(prefix="/profile-files", tags=["profile-files"])
+
+_SECRET_KEY_HINT = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD|PASSWD|API)", re.IGNORECASE)
+_MASK_KEEP = 3
+
+
+class ProfileFile(BaseModel):
+    name: str
+    path: str
+    exists: bool
+    masked: bool = False
+    content: str = ""
+
+
+class ProfileFileUpdate(BaseModel):
+    name: str
+    content: str
+
+
+_EDITABLE_FILES = {"SOUL.md", "soul.md", "USER.md", "MEMORY.md"}
+
+
+def _file_path(profile_root: Path, name: str) -> Path | None:
+    if name in ("SOUL.md", "soul.md"):
+        return _resolve_soul_path(profile_root)
+    if name in ("USER.md", "MEMORY.md"):
+        return profile_root / "memories" / name
+    return None
+
+
+def _mask_value(value: str) -> str:
+    if not value:
+        return value
+    if len(value) <= _MASK_KEEP * 2:
+        return "***"
+    return f"{value[:_MASK_KEEP]}***{value[-_MASK_KEEP:]}"
+
+
+def _mask_env_content(content: str) -> str:
+    if not content:
+        return content
+    trailing_newline = "\n" if content.endswith("\n") else ""
+    out: list[str] = []
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            out.append(line)
+            continue
+        key, _, value = line.partition("=")
+        if _SECRET_KEY_HINT.search(key.strip()):
+            out.append(f"{key}={_mask_value(value.strip())}")
+        else:
+            out.append(line)
+    return "\n".join(out) + trailing_newline
+
+
+def _resolve_soul_path(profile_root: Path) -> Path:
+    """Return the path to the SOUL file, preferring the canonical casing."""
+    for name in ("SOUL.md", "soul.md"):
+        path = profile_root / name
+        if path.exists():
+            return path
+    return profile_root / "SOUL.md"
+
+
+def _build_file_list(profile_root: Path) -> list[ProfileFile]:
+    soul_path = _resolve_soul_path(profile_root)
+    candidates: list[tuple[str, Path, bool]] = [
+        ("config.yaml", profile_root / "config.yaml", False),
+        (".env", profile_root / ".env", True),
+        (soul_path.name, soul_path, False),
+        ("USER.md", profile_root / "memories" / "USER.md", False),
+        ("MEMORY.md", profile_root / "memories" / "MEMORY.md", False),
+    ]
+    files: list[ProfileFile] = []
+    for name, path, masked in candidates:
+        entry = ProfileFile(name=name, path=str(path), exists=path.exists(), masked=masked)
+        if entry.exists:
+            entry.content = path.read_text(encoding="utf-8")
+            if masked:
+                entry.content = _mask_env_content(entry.content)
+        files.append(entry)
+    return files
+
+
+@profile_files_router.get("")
+def get_profile_files(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    profiles: ProfileService = Depends(profile_service),
+):
+    ensure_profile_access(user, profile)
+    root = profiles.profile_root(profile)
+    return {"files": _build_file_list(root)}
+
+
+@profile_files_router.put("")
+def update_profile_file(
+    payload: ProfileFileUpdate,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    profiles: ProfileService = Depends(profile_service),
+):
+    ensure_profile_access(user, profile)
+    if payload.name not in _EDITABLE_FILES:
+        raise HTTPException(status_code=400, detail=f"File '{payload.name}' is not editable")
+    root = profiles.profile_root(profile)
+    path = _file_path(root, payload.name)
+    if path is None:
+        raise HTTPException(status_code=400, detail=f"Unknown file '{payload.name}'")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload.content, encoding="utf-8")
+    return {"ok": True, "name": payload.name}
+
+
+# ── /profiles ───────────────────────────────────────────────────────────────
+
+profiles_router = APIRouter(prefix="/profiles", tags=["profiles"])
+
+
+class ProfileInfoResponse(BaseModel):
+    name: str
+    config_path: str
+    env_path: str
+    state_db_path: str
+    skills_path: str
+    exists: bool
+
+
+@profiles_router.get("")
+async def list_profiles(
+    user: User = Depends(get_current_user),
+    service: ProfileService = Depends(profile_service),
+):
+    profiles = service.list_profiles()
+    if user.role != "admin" and "*" not in user.profiles:
+        profiles = [profile for profile in profiles if profile in user.profiles]
+    return {"profiles": profiles}
+
+
+@profiles_router.get("/{name}", response_model=ProfileInfoResponse)
+async def get_profile(
+    name: str,
+    user: User = Depends(get_current_user),
+    service: ProfileService = Depends(profile_service),
+):
+    if user.role != "admin" and "*" not in user.profiles and name not in user.profiles:
+        raise HTTPException(status_code=403, detail="No access to this profile")
+    info = service.get_profile_info(name)
+    return ProfileInfoResponse(
+        name=info.name,
+        config_path=str(info.config_path),
+        env_path=str(info.env_path),
+        state_db_path=str(info.state_db_path),
+        skills_path=str(info.skills_path),
+        exists=info.exists,
+    )
+
+
+# ── /memory ─────────────────────────────────────────────────────────────────
+
+memory_router = APIRouter(prefix="/memory", tags=["memory"])
+
+
+@memory_router.get("")
+def get_memory(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+    profiles: ProfileService = Depends(profile_service),
+):
+    profile_name = ensure_profile_access(user, profile)
+    root = profiles.profile_root(profile_name)
+    memories = {}
+    for filename in ("MEMORY.md", "USER.md"):
+        path = root / "memories" / filename
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+            memories[filename.removesuffix(".md")] = content
+
+    return {
+        "config": service.read_section(profile_name, "memory"),
+        "memories": memories,
+    }
+
+
+@memory_router.put("")
+def update_memory(
+    payload: dict[str, Any],
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    service.write_section(ensure_profile_access(user, profile), "memory", payload)
+    return {"ok": True}
+
+
+# ── /skills ─────────────────────────────────────────────────────────────────
+
+skills_router = APIRouter(prefix="/skills", tags=["skills"])
+
+
+@skills_router.get("")
+def list_skills(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: SkillService = Depends(skill_service),
+):
+    resolved = ensure_profile_access(user, profile)
+    return {"skills": service.list_skills(resolved)}
+
+
+@skills_router.get("/{name}")
+def get_skill(
+    name: str,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: SkillService = Depends(skill_service),
+):
+    try:
+        return service.read_skill(ensure_profile_access(user, profile), name)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Skill not found") from error
+
+
+# ── /channels ───────────────────────────────────────────────────────────────
+
+channels_router = APIRouter(prefix="/channels", tags=["channels"])
+
+CHANNEL_NAMES = (
+    "telegram",
+    "discord",
+    "slack",
+    "mattermost",
+    "matrix",
+    "feishu",
+    "weixin",
+    "webhook",
+    "whatsapp",
+)
+CHANNELS_IN_PLATFORMS = {"webhook"}
+
+CHANNEL_ENV_MARKERS: dict[str, str] = {
+    "feishu": "FEISHU_APP_ID",
+    "weixin": "WEIXIN_ACCOUNT_ID",
+    "telegram": "TELEGRAM_BOT_TOKEN",
+    "discord": "DISCORD_BOT_TOKEN",
+    "slack": "SLACK_BOT_TOKEN",
+    "mattermost": "MATTERMOST_TOKEN",
+    "matrix": "MATRIX_ACCESS_TOKEN",
+}
+CHANNEL_ENV_ALT_MARKERS: dict[str, list[str]] = {
+    "weixin": ["WEIXIN_TOKEN"],
+}
+
+CHANNEL_ENV_FIELDS: dict[str, list[str]] = {
+    "feishu": [
+        "FEISHU_APP_ID",
+        "FEISHU_APP_SECRET",
+        "FEISHU_VERIFICATION_TOKEN",
+        "FEISHU_ENCRYPT_KEY",
+    ],
+    "weixin": [
+        "WEIXIN_ACCOUNT_ID",
+        "WEIXIN_TOKEN",
+        "WEIXIN_ENCODING_AES_KEY",
+    ],
+    "telegram": ["TELEGRAM_BOT_TOKEN"],
+    "discord": ["DISCORD_BOT_TOKEN"],
+    "slack": ["SLACK_BOT_TOKEN"],
+    "mattermost": ["MATTERMOST_TOKEN", "MATTERMOST_URL"],
+    "matrix": ["MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID"],
+}
+
+CHANNEL_CREDENTIAL_ENV_MAP: dict[str, dict[str, str]] = {
+    "telegram": {"token": "TELEGRAM_BOT_TOKEN"},
+    "discord": {"token": "DISCORD_BOT_TOKEN"},
+    "slack": {"token": "SLACK_BOT_TOKEN"},
+    "mattermost": {"token": "MATTERMOST_TOKEN"},
+    "matrix": {
+        "homeserver": "MATRIX_HOMESERVER",
+        "access_token": "MATRIX_ACCESS_TOKEN",
+    },
+    "feishu": {
+        "app_id": "FEISHU_APP_ID",
+        "app_secret": "FEISHU_APP_SECRET",
+        "verification_token": "FEISHU_VERIFICATION_TOKEN",
+        "encrypt_key": "FEISHU_ENCRYPT_KEY",
+    },
+    "weixin": {
+        "token": "WEIXIN_TOKEN",
+        "encoding_aes_key": "WEIXIN_ENCODING_AES_KEY",
+    },
+}
+
+CHANNEL_CREDENTIAL_FIELDS = {
+    "token",
+    "bot_token",
+    "app_id",
+    "app_secret",
+    "verification_token",
+    "encrypt_key",
+    "appid",
+    "appsecret",
+    "access_token",
+    "phone_number_id",
+    "corp_id",
+    "agent_id",
+    "secret",
+    "key",
+}
+
+
+def _read_env_vars_for_profile(profile: str | None, hermes_home: Path | None = None) -> dict[str, str]:
+    svc = EnvService(hermes_home=hermes_home)
+    return svc.read_env(profile)
+
+
+def _detect_env_channels(profile: str | None, hermes_home: Path | None = None) -> set[str]:
+    env = _read_env_vars_for_profile(profile, hermes_home)
+    configured: set[str] = set()
+    for name in CHANNEL_NAMES:
+        marker = CHANNEL_ENV_MARKERS.get(name)
+        if marker and marker in env:
+            configured.add(name)
+            continue
+        for alt in CHANNEL_ENV_ALT_MARKERS.get(name, []):
+            if alt in env:
+                configured.add(name)
+                break
+    return configured
+
+
+def _deep_merge_dict(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge_dict(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _read_channel_from_config(config: dict[str, Any], name: str) -> dict[str, Any] | None:
+    direct = config.get(name)
+    platforms = config.get("platforms")
+    platform_channel: dict[str, Any] | None = None
+    if isinstance(platforms, dict):
+        nested = platforms.get(name)
+        if isinstance(nested, dict):
+            platform_channel = nested
+
+    if isinstance(direct, dict) or isinstance(platform_channel, dict):
+        base: dict[str, Any] = direct if isinstance(direct, dict) else {}
+        view = _deep_merge_dict(base, platform_channel if isinstance(platform_channel, dict) else {})
+        if isinstance(platform_channel, dict):
+            view["enabled"] = bool(platform_channel.get("enabled", True))
+        else:
+            view["enabled"] = False
+        return view
+
+    return None
+
+
+def _has_non_empty_credential(value: Any, key: str | None = None) -> bool:
+    if isinstance(value, dict):
+        return any(_has_non_empty_credential(child_value, str(child_key)) for child_key, child_value in value.items())
+    if isinstance(value, list):
+        return any(_has_non_empty_credential(item) for item in value)
+    if key and key.lower() in CHANNEL_CREDENTIAL_FIELDS:
+        if isinstance(value, str):
+            return bool(value.strip())
+        return bool(value)
+    return False
+
+
+def _is_channel_configured(name: str, channel: dict[str, Any]) -> bool:
+    if name == "webhook":
+        if bool(channel.get("enabled")):
+            return True
+        extra = channel.get("extra")
+        if isinstance(extra, dict):
+            routes = extra.get("routes")
+            if isinstance(routes, dict) and len(routes) > 0:
+                return True
+        if isinstance(channel.get("key"), str) and channel.get("key", "").strip():
+            return True
+        return False
+    return _has_non_empty_credential(channel)
+
+
+def _write_channel_to_config(config: dict[str, Any], name: str, payload: dict[str, Any]) -> None:
+    if set(payload.keys()) == {"enabled"} and isinstance(payload.get("enabled"), bool):
+        if not isinstance(config.get("platforms"), dict):
+            config["platforms"] = {}
+        platforms = config["platforms"]
+        raw_current = platforms.get(name)
+        current: dict[str, Any] = raw_current if isinstance(raw_current, dict) else {}
+        current["enabled"] = bool(payload["enabled"])
+        platforms[name] = current
+        return
+
+    if name in config and isinstance(config.get(name), dict):
+        config[name] = _deep_merge_dict(config[name], payload)
+        return
+
+    platforms = config.get("platforms")
+    if isinstance(platforms, dict) and name in platforms and isinstance(platforms.get(name), dict):
+        platforms[name] = _deep_merge_dict(platforms[name], payload)
+        return
+
+    if name in CHANNELS_IN_PLATFORMS:
+        if not isinstance(config.get("platforms"), dict):
+            config["platforms"] = {}
+        platforms = config["platforms"]
+        raw_current = platforms.get(name)
+        current: dict[str, Any] = raw_current if isinstance(raw_current, dict) else {}
+        platforms[name] = _deep_merge_dict(current, payload)
+        return
+
+    raw_current = config.get(name)
+    current: dict[str, Any] = raw_current if isinstance(raw_current, dict) else {}
+    config[name] = _deep_merge_dict(current, payload)
+
+
+@channels_router.get("")
+def get_channels(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    safe_profile = ensure_profile_access(user, profile)
+    config = service.read_config(safe_profile)
+    if not isinstance(config, dict):
+        config = {}
+
+    result: dict[str, Any] = {}
+    for name in CHANNEL_NAMES:
+        channel = _read_channel_from_config(config, name)
+        if isinstance(channel, dict) and _is_channel_configured(name, channel):
+            result[name] = channel
+
+    hermes_home = service.profiles.hermes_home
+    env_channels = _detect_env_channels(safe_profile, hermes_home)
+    for name in env_channels:
+        if name not in result:
+            result[name] = {
+                "enabled": True,
+                "configured_via": "env",
+                "_note": "此渠道通过环境变量配置，无法在此编辑。请修改 .env 文件。",
+            }
+
+    return result
+
+
+@channels_router.get("/env")
+def get_channels_env(
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    safe_profile = ensure_profile_access(user, profile)
+    env_svc = EnvService(hermes_home=service.profiles.hermes_home)
+    env_vars = env_svc.read_env(safe_profile)
+    result: dict[str, dict[str, str]] = {}
+    for name, fields in CHANNEL_ENV_FIELDS.items():
+        found = {field: env_vars[field] for field in fields if field in env_vars}
+        if found:
+            result[name] = found
+    return {"channels": result}
+
+
+@channels_router.get("/{name}")
+def get_channel(
+    name: str,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    config = service.read_config(ensure_profile_access(user, profile))
+    if not isinstance(config, dict):
+        return {}
+    channel = _read_channel_from_config(config, name)
+    return channel if isinstance(channel, dict) else {}
+
+
+@channels_router.put("/{name}")
+def update_channel(
+    name: str,
+    payload: dict[str, Any],
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    safe_profile = ensure_profile_access(user, profile)
+
+    config_payload: dict[str, Any] = dict(payload)
+    env_updates: dict[str, str | None] = {}
+    for field, env_var in CHANNEL_CREDENTIAL_ENV_MAP.get(name, {}).items():
+        if field not in config_payload:
+            continue
+        value = config_payload.pop(field)
+        env_updates[env_var] = value if (isinstance(value, str) and value.strip()) else None
+
+    if env_updates:
+        env_svc = EnvService(hermes_home=service.profiles.hermes_home)
+        env_svc.write_env(safe_profile, env_updates)
+
+    config = service.read_config(safe_profile)
+    if not isinstance(config, dict):
+        config = {}
+
+    if config_payload:
+        _write_channel_to_config(config, name, config_payload)
+        service.write_config(safe_profile, config)
+    return {"ok": True}
+
+
+@channels_router.delete("/{name}")
+def delete_channel(
+    name: str,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    safe_profile = ensure_profile_access(user, profile)
+    config = service.read_config(safe_profile)
+    if not isinstance(config, dict):
+        return {"ok": True}
+
+    if name in config:
+        del config[name]
+
+    platforms = config.get("platforms")
+    if isinstance(platforms, dict) and name in platforms:
+        del platforms[name]
+
+    service.write_config(safe_profile, config)
+    return {"ok": True}
+
+
+@channels_router.get("/{name}/env")
+def get_channel_env(
+    name: str,
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    safe_profile = ensure_profile_access(user, profile)
+    env_svc = EnvService(hermes_home=service.profiles.hermes_home)
+    env_vars = env_svc.read_env(safe_profile)
+    fields = CHANNEL_ENV_FIELDS.get(name, [])
+    result: dict[str, str] = {}
+    for field in fields:
+        if field in env_vars:
+            result[field] = env_vars[field]
+    return {"channel": name, "fields": result}
+
+
+@channels_router.put("/{name}/env")
+def update_channel_env(
+    name: str,
+    payload: dict[str, Any],
+    profile: str = Query("default"),
+    user: User = Depends(get_current_user),
+    service: YamlService = Depends(yaml_service),
+):
+    safe_profile = ensure_profile_access(user, profile)
+    env_svc = EnvService(hermes_home=service.profiles.hermes_home)
+    env_svc.write_env(safe_profile, payload)
+    return {"ok": True}
+
+
+# ── /models ─────────────────────────────────────────────────────────────────
+
+models_router = APIRouter(prefix="/models", tags=["models"])
 
 MODEL_SECTIONS = [
     "model",
@@ -28,13 +722,12 @@ MODEL_SECTIONS = [
 ]
 
 
-@router.get("")
+@models_router.get("")
 def get_models(
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
     service: YamlService = Depends(yaml_service),
 ):
-    """返回模型相关的组合配置：model / auxiliary / fallback_providers"""
     config = service.read_config(ensure_profile_access(user, profile))
     if not isinstance(config, dict):
         return {"model": {}, "auxiliary": {}, "fallback_providers": []}
@@ -45,7 +738,7 @@ def get_models(
     return result
 
 
-@router.put("/{section}")
+@models_router.put("/{section}")
 def update_model_section(
     section: str,
     payload: dict[str, Any] | list[Any],
@@ -53,13 +746,6 @@ def update_model_section(
     user: User = Depends(get_current_user),
     service: YamlService = Depends(yaml_service),
 ):
-    """更新 model / auxiliary / fallback_providers 中的某一个 section
-
-    ``model`` section 采用**合并写入**：前端表单只编辑 provider/default/context_length/
-    api_mode 等少数字段，整体替换会把 model section 里其它 Hermes 认识的字段
-    （base_url、max_tokens、auth_mode…）静默删掉。provider 变更时沿用 Hermes
-    clear_model_endpoint_credentials 语义，清掉旧端点残留的 api_key/api/api_mode。
-    """
     if section not in MODEL_SECTIONS:
         raise HTTPException(status_code=400, detail=f"Invalid section: {section}")
     profile_name = ensure_profile_access(user, profile)
@@ -78,8 +764,6 @@ def update_model_section(
             else:
                 merged.pop("api_mode", None)
         if provider_changed and not explicit_mode:
-            # 切换 provider 且未显式指定新 api_mode 时，清除旧端点残留字段
-            # （与 Hermes clear_model_endpoint_credentials 行为一致）
             merged.pop("api_mode", None)
             merged.pop("api_key", None)
             merged.pop("api", None)
@@ -89,7 +773,7 @@ def update_model_section(
     return {"ok": True, "section": section}
 
 
-@router.delete("/providers/{name}")
+@models_router.delete("/providers/{name}")
 def delete_provider(
     name: str,
     profile: str = Query("default"),
@@ -144,26 +828,30 @@ def delete_provider(
     return {"ok": True, "changed": changed, "name": target_name}
 
 
-# ── 组合 Provider 列表 ─────────────────────────────────
+_REGISTRY_FILENAME = "hermes_provider_registry.json"
+
+
+def _builtin_registry_path() -> Path:
+    return Path(__file__).resolve().parent.parent / _REGISTRY_FILENAME
 
 
 def _registry_path() -> Path:
-    """Locate hermes_provider_registry.json relative to the project root."""
-    return Path(__file__).resolve().parent.parent.parent / "hermes_provider_registry.json"
+    return Path(get_settings().data_dir) / _REGISTRY_FILENAME
+
+
+def _ensure_registry_file() -> None:
+    path = _registry_path()
+    if path.is_file():
+        return
+    builtin = _builtin_registry_path()
+    if not builtin.is_file():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(builtin.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def _load_provider_registry() -> dict[str, dict[str, Any]]:
-    """Load the provider registry (env var → provider metadata).
-
-    Data source: hermes_provider_registry.json at the project root. The file is
-    a flat mapping of the form:
-
-        { "providers": { "DEEPSEEK_API_KEY": { "name": "DeepSeek", "base_url": "..." }, ... } }
-
-    The key is the authoritative env var: if it has a value in the profile's
-    .env, the corresponding provider is considered configured. The registry
-    intentionally does NOT include the "costme" provider.
-    """
+    _ensure_registry_file()
     path = _registry_path()
     if not path.exists():
         return {}
@@ -186,11 +874,6 @@ def _load_provider_registry() -> dict[str, dict[str, Any]]:
 
 
 def _load_hermes_provider_base_urls() -> dict[str, str]:
-    """Return provider name → default base URL from the provider registry.
-
-    Deduplicates multiple env vars that map to the same provider name (e.g.
-    ANTHROPIC_API_KEY / ANTHROPIC_TOKEN both map to "Anthropic").
-    """
     result: dict[str, str] = {}
     for info in _load_provider_registry().values():
         name = info.get("name", "")
@@ -203,9 +886,7 @@ def _load_hermes_provider_base_urls() -> dict[str, str]:
 def _collect_providers_from_config_and_env(
     config: dict[str, Any], env_vars: dict[str, str]
 ) -> list[dict[str, Any]]:
-    """合并 config + .env 中的所有 provider，返回统一列表。"""
     registry = _load_provider_registry()
-    # provider name → 默认 base_url（同一 provider 多个 env var 去重）
     name_to_base_url: dict[str, str] = {}
     for info in registry.values():
         name = info.get("name", "")
@@ -213,18 +894,14 @@ def _collect_providers_from_config_and_env(
         if name and url and name not in name_to_base_url:
             name_to_base_url[name] = url
 
-    # 1. 主 provider（来自 model 区段）
     model_section = config.get("model", {}) if isinstance(config, dict) else {}
     main_provider_name = (model_section.get("provider", "") if isinstance(model_section, dict) else "").replace("custom:", "")
     main_base_url = model_section.get("base_url", "") if isinstance(model_section, dict) else ""
 
-    # 2. 自定义 provider
     custom_list = config.get("custom_providers", []) if isinstance(config, dict) else []
     if not isinstance(custom_list, list):
         custom_list = []
 
-    # 3. 从 .env 中按 registry 反查已配置的 provider：
-    #    遍历 .env 的环境变量，若某个变量是 registry 的 key，则该 provider 已配置。
     env_providers: dict[str, dict[str, Any]] = {}
     for env_key, env_val in env_vars.items():
         if not env_val:
@@ -233,10 +910,7 @@ def _collect_providers_from_config_and_env(
         if not info:
             continue
         name = info.get("name", env_key)
-        # 同一 provider 名只保留第一个匹配的 env var
         if name not in env_providers:
-            # base_url：优先取 base_url_env_var 在 .env 中的值（用户可能自定义 URL），
-            # 否则回退 registry 中的默认 base_url。
             base_url = ""
             base_url_env_var = str(info.get("base_url_env_var") or "")
             if base_url_env_var and env_vars.get(base_url_env_var):
@@ -245,20 +919,16 @@ def _collect_providers_from_config_and_env(
                 base_url = str(info.get("base_url") or "")
             env_providers[name] = {**info, "key_env": env_key, "base_url": base_url}
 
-    # 构建结果 — custom_providers 是 provider 列表，model.provider 标记当前激活
     seen: set[str] = set()
     result: list[dict[str, Any]] = []
 
-    # Resolve the active provider name from model.provider
     active_provider_name = main_provider_name
-    # When model.provider == "custom", match by base_url to find the actual custom_providers entry
     if active_provider_name == "custom" and main_base_url:
         for cp in custom_list:
             if isinstance(cp, dict) and str(cp.get("base_url", "")).rstrip("/") == main_base_url.rstrip("/"):
                 active_provider_name = str(cp.get("name", "custom"))
                 break
 
-    # 自定义 provider（来自 custom_providers）
     for cp in custom_list:
         if not isinstance(cp, dict):
             continue
@@ -267,7 +937,6 @@ def _collect_providers_from_config_and_env(
             continue
         seen.add(cname)
         key_env = cp.get("key_env", "") or ""
-        # 实际密钥值：优先取 .env 中 key_env 指向的变量值，否则取 inline api_key
         actual_key = env_vars.get(key_env, "") if key_env else ""
         if not actual_key:
             actual_key = str(cp.get("api_key") or "")
@@ -301,7 +970,6 @@ def _collect_providers_from_config_and_env(
             "is_active": is_active,
         })
 
-    # 仅 .env 中发现的 provider（来自 registry；无 base_url 的也展示，由前端显示为默认地址）
     for name, info in sorted(env_providers.items()):
         if name in seen:
             continue
@@ -323,7 +991,7 @@ def _collect_providers_from_config_and_env(
     return result
 
 
-@router.get("/providers")
+@models_router.get("/providers")
 def get_providers(
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
@@ -337,18 +1005,8 @@ def get_providers(
     return {"providers": result}
 
 
-# ── Provider 预设列表（来自 hermes_provider_registry.json）─────────────────────
-
-
 def _load_provider_presets() -> list[dict[str, Any]]:
-    """
-    从 hermes_provider_registry.json 加载内置 provider 预设列表。
-
-    数据源与 env provider 扫描一致，确保"新增 Provider"下拉里的预设
-    与 .env 中自动识别出的 provider 完全对应。registry 不包含 costme。
-    """
     presets: dict[str, dict[str, Any]] = {}
-    # registry: env_var → {name, base_url, base_url_env_var}；同一 name 的多个 env var 归并为一条预设
     for env_key, info in _load_provider_registry().items():
         name = info.get("name", "")
         if not name:
@@ -372,18 +1030,16 @@ def _load_provider_presets() -> list[dict[str, Any]]:
 
     result = list(presets.values())
 
-    # 排序：常用 provider 在前
     PRIORITY = {"deepseek", "anthropic", "OpenAI API", "Google AI Studio", "xAI", "GitHub Copilot", "Qwen Cloud", "Z.AI / GLM"}
     result.sort(key=lambda p: (0 if p["name"] in PRIORITY else 1, p["name"]))
 
     return result
 
 
-@router.get("/provider-presets")
+@models_router.get("/provider-presets")
 def get_provider_presets(
     user: User = Depends(get_current_user),
 ):
-    """返回 Hermes 内置的 provider 预设列表"""
     return {"presets": _load_provider_presets()}
 
 
@@ -412,12 +1068,6 @@ def _is_multimodal(item: Any, mid: str) -> bool:
 
 
 def _normalize_model_item(item: Any) -> dict[str, Any]:
-    """把 /models 返回的单个模型条目规整为统一结构。
-
-    兼容两种形态：
-    - dict：取 id / name / owned_by / context_length / created 等字段
-    - 其它（字符串等）：仅作为 id
-    """
     if isinstance(item, dict):
         mid = item.get("id")
         if not mid:
@@ -451,7 +1101,7 @@ def _normalize_model_item(item: Any) -> dict[str, Any]:
     return {}
 
 
-@router.get("/providers/{name}/models", response_model=ProviderModelsResult)
+@models_router.get("/providers/{name}/models", response_model=ProviderModelsResult)
 def get_provider_models(
     name: str,
     profile: str = Query("default"),
@@ -468,7 +1118,6 @@ def get_provider_models(
     if not provider:
         raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
 
-    # 优先使用 config.yaml 中 custom_providers[].models 的显式模型列表
     configured_models: list[str] = []
     if isinstance(config, dict):
         cp_list = config.get("custom_providers", [])
@@ -507,14 +1156,12 @@ def get_provider_models(
             error="未配置 Base URL",
         )
 
-    # 解析 key：优先 key_env，再 fallback PROVIDER_API_KEY
     key_env = str(provider.get("key_env", ""))
     api_key = env_vars.get(key_env, "") if key_env else ""
     if not api_key:
         fallback_key = f"{str(provider.get('name', name)).upper()}_API_KEY"
         api_key = env_vars.get(fallback_key, "")
 
-    # 自定义 provider 的 inline key fallback
     if not api_key and isinstance(config, dict):
         cp_list = config.get("custom_providers", [])
         if isinstance(cp_list, list):
@@ -579,9 +1226,6 @@ def get_provider_models(
         )
 
 
-# ── 自定义 Provider 连通性测试 ─────────────────────────────────
-
-
 class TestConnectionRequest(BaseModel):
     name: str
     model: str | None = None
@@ -598,21 +1242,15 @@ class TestConnectionResult(BaseModel):
     provider_info: dict[str, Any] | None = None
 
 
-@router.post("/custom_providers/test-connection", response_model=TestConnectionResult)
+@models_router.post("/custom_providers/test-connection", response_model=TestConnectionResult)
 def test_custom_provider_connection(
     body: TestConnectionRequest,
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
     yaml_svc: YamlService = Depends(yaml_service),
 ):
-    """
-    测试自定义 Provider 的连通性：
-    1. 调用 /v1/models 获取该 provider 支持的模型列表
-    2. 如果指定了 model，额外调用 /v1/chat/completions 验证模型响应
-    """
     profile_name = ensure_profile_access(user, profile)
 
-    # 读取 custom_providers 配置
     config = yaml_svc.read_config(profile_name)
     custom_providers = config.get("custom_providers", [])
     if not isinstance(custom_providers, list):
@@ -631,7 +1269,6 @@ def test_custom_provider_connection(
     if not base_url:
         raise HTTPException(status_code=400, detail=f"Provider '{body.name}' has no base_url configured")
 
-    # 获取 API key
     env_svc = EnvService(yaml_svc.profiles.hermes_home)
     env_vars = env_svc.read_env(profile_name)
 
@@ -640,10 +1277,8 @@ def test_custom_provider_connection(
     if key_env:
         api_key = env_vars.get(key_env, "")
     else:
-        # fallback: 使用 provider 的 api_key 字段（如果直接配置了值）
         api_key = provider.get("api_key", "") or ""
 
-    # 构建 headers
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -655,7 +1290,6 @@ def test_custom_provider_connection(
     session = req_lib.Session()
     session.trust_env = False
 
-    # 结果容器
     result = TestConnectionResult(
         name=body.name,
         base_url=base_url,
@@ -667,14 +1301,9 @@ def test_custom_provider_connection(
         },
     )
 
-    # ── 1. 测试 /v1/models ──
     models_url = f"{base_url}/models"
     try:
-        resp = session.get(
-            models_url,
-            headers=headers,
-            timeout=15,
-        )
+        resp = session.get(models_url, headers=headers, timeout=15)
         result.http_code = resp.status_code
         if resp.status_code == 200:
             data = resp.json()
@@ -701,7 +1330,6 @@ def test_custom_provider_connection(
         result.models_error = f"请求失败: {str(e)}"
         result.http_code = 0
 
-    # ── 2. 如果指定了 model，测试 /v1/chat/completions ──
     if body.model:
         chat_url = f"{base_url}/chat/completions"
         chat_payload = {
@@ -711,12 +1339,7 @@ def test_custom_provider_connection(
             "temperature": 0,
         }
         try:
-            chat_resp = session.post(
-                chat_url,
-                headers=headers,
-                json=chat_payload,
-                timeout=30,
-            )
+            chat_resp = session.post(chat_url, headers=headers, json=chat_payload, timeout=30)
             if chat_resp.status_code == 200:
                 chat_data = chat_resp.json()
                 choice = chat_data.get("choices", [{}])[0]
@@ -737,12 +1360,7 @@ def test_custom_provider_connection(
 
 
 class ProviderCreatePayload(BaseModel):
-    """新增 provider 的请求体。
-
-    mode="preset"：从 hermes_provider_registry.json 反查预设，只需 provider_name 与 key_value；
-    mode="custom"：完全自定义，需 name / key_env_var / key_value / base_url，其余可选。
-    """
-    mode: str = "preset"  # "preset" | "custom"
+    mode: str = "preset"
     provider_name: str = ""
     name: str = ""
     key_env_var: str = ""
@@ -754,19 +1372,13 @@ class ProviderCreatePayload(BaseModel):
     rate_limit_delay: float | None = None
 
 
-@router.post("/providers", status_code=201)
+@models_router.post("/providers", status_code=201)
 def create_provider(
     payload: ProviderCreatePayload,
     profile: str = Query("default"),
     user: User = Depends(get_current_user),
     yaml_svc: YamlService = Depends(yaml_service),
 ):
-    """新增 provider：把 key 写入 .env，把 provider 配置写入 config.yaml。
-
-    preset 模式：从 provider registry 反查预设，key_env / base_url 固定取自 registry，
-    仅需用户提供 key 值。
-    custom 模式：完全由用户提供 name / key_env_var / key_value / base_url 等。
-    """
     profile_name = ensure_profile_access(user, profile)
     env_svc = EnvService(yaml_svc.profiles.hermes_home)
 
@@ -821,16 +1433,13 @@ def create_provider(
         if payload.rate_limit_delay is not None:
             entry["rate_limit_delay"] = payload.rate_limit_delay
 
-    # 1) 写入 .env：key_env_var=key_value
     if payload.key_value:
         env_svc.set_env_var(profile_name, env_key, payload.key_value)
 
-    # 2) 写入 config.yaml：custom_providers 追加（同名去重）
     config = yaml_svc.read_config(profile_name)
     custom_list = config.get("custom_providers", [])
     if not isinstance(custom_list, list):
         custom_list = []
-    # 名称去重校验：已存在则拒绝（大小写不敏感）
     if any(
         isinstance(item, dict) and str(item.get("name", "")).lower() == entry_name.lower()
         for item in custom_list
@@ -847,14 +1456,6 @@ def create_provider(
 
 
 class ProviderUpdatePayload(BaseModel):
-    """更新（或新增）自定义 Provider 的请求体。
-
-    密钥值通过 ``api_key`` 传递：当 ``key_env`` 存在时写入 .env 中该变量，
-    否则回退为 custom_providers 条目里的 inline ``api_key``。
-
-    ``discover_models`` / ``models`` / ``extra_headers`` 为 Hermes 认识的进阶字段：
-    关闭自动发现后可用静态模型清单，extra_headers 用于网关/反代的自定义请求头。
-    """
     name: str
     base_url: str
     key_env: str = ""
@@ -868,7 +1469,7 @@ class ProviderUpdatePayload(BaseModel):
     extra_headers: dict[str, str] | None = None
 
 
-@router.put("/providers/{name}")
+@models_router.put("/providers/{name}")
 def update_provider(
     name: str,
     payload: ProviderUpdatePayload,
@@ -876,12 +1477,6 @@ def update_provider(
     user: User = Depends(get_current_user),
     yaml_svc: YamlService = Depends(yaml_service),
 ):
-    """更新（不存在时新增）自定义 Provider，并把密钥值写入 .env。
-
-    编辑模型列表中的「API 密钥」时，仅更新 config 的 inline api_key 不会生效，
-    因为实际密钥解析优先取 .env 中 key_env 指向的变量。因此这里统一把密钥
-    持久化到 .env，保证编辑后确实改变。
-    """
     profile_name = ensure_profile_access(user, profile)
     env_svc = EnvService(yaml_svc.profiles.hermes_home)
 
@@ -940,8 +1535,6 @@ def update_provider(
         entry.pop("api_mode", None)
     if payload.default_model:
         entry["default_model"] = payload.default_model.strip()
-        # Hermes 解析时 legacy ``model`` 键优先于 ``default_model``；若旧条目残留
-        # ``model``，用户编辑的 default_model 会被静默忽略，必须同步清掉。
         entry.pop("model", None)
     else:
         entry.pop("default_model", None)
@@ -955,10 +1548,9 @@ def update_provider(
     else:
         entry.pop("rate_limit_delay", None)
 
-    # 进阶字段：payload 未传（None）时保留 old_entry 原值（entry 已 {**old_entry} 继承）
     if payload.discover_models is not None:
         if payload.discover_models:
-            entry.pop("discover_models", None)  # true 是 Hermes 默认，不写盘
+            entry.pop("discover_models", None)
         else:
             entry["discover_models"] = False
     if payload.models is not None:
@@ -978,7 +1570,6 @@ def update_provider(
         else:
             entry.pop("extra_headers", None)
 
-    # 密钥持久化：key_env 存在时写入 .env，否则使用 inline api_key
     if key_env:
         if api_key:
             env_svc.set_env_var(profile_name, key_env, api_key)
@@ -999,14 +1590,177 @@ def update_provider(
 
 
 def _registry_lookup_by_name(provider_name: str) -> tuple[str, dict[str, Any]] | None:
-    """按预设名从 provider registry 反查 (env_key, provider_meta)。
-
-    registry 结构为 ``env_var → {name, base_url, base_url_env_var}``，
-    因此通过 name 反查时把 env var 名一并带回，供 preset 模式写 .env 使用。
-    同一 name 可能有多个 env var（如 Anthropic 三个），优先返回第一个。
-    """
     target = provider_name.strip().lower()
     for env_key, info in _load_provider_registry().items():
         if str(info.get("name") or "").lower() == target:
             return env_key, info
     return None
+
+
+# ── /admin ──────────────────────────────────────────────────────────────────
+
+admin_router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+class ModelsCopyRequest(BaseModel):
+    profiles: list[str] = Field(..., min_length=1)
+    source_profile: str
+    sections: list[str] = Field(..., min_length=1)
+
+
+class ModelsSetRequest(BaseModel):
+    profiles: list[str] = Field(..., min_length=1)
+    values: dict[str, Any] = Field(..., min_length=1)
+
+
+class SoulBatchRequest(BaseModel):
+    profiles: list[str] = Field(..., min_length=1)
+    content: str
+
+
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
+def _backup_file(path: Path) -> None:
+    if not path.exists():
+        return
+    backup = path.with_name(f"{path.name}.{int(time.time())}.bak")
+    shutil.copy2(path, backup)
+
+
+def _audit(
+    request: Request,
+    user: User,
+    action: str,
+    profiles: list[str],
+    results: list[dict],
+) -> None:
+    succeeded = sum(1 for r in results if r.get("success"))
+    log_audit_event(
+        request.app.state.settings,
+        action=action,
+        actor=user.username,
+        target_type="profiles",
+        target_id=",".join(profiles),
+        details={
+            "profiles": profiles,
+            "total": len(profiles),
+            "succeeded": succeeded,
+            "failed": len(profiles) - succeeded,
+            "results": results,
+        },
+        success=(succeeded == len(profiles)),
+        ip_address=_client_ip(request),
+    )
+
+
+def _apply_model_copy(
+    yaml_svc: YamlService, source: str, profiles: list[str], sections: list[str]
+) -> list[dict]:
+    source_config = yaml_svc.read_config(source)
+    env_svc = EnvService(yaml_svc.profiles.hermes_home)
+    source_env = env_svc.read_env(source)
+    key_envs_to_copy: set[str] = set()
+    if "custom_providers" in sections and isinstance(source_config, dict):
+        cp_list = source_config.get("custom_providers", [])
+        if isinstance(cp_list, list):
+            for cp in cp_list:
+                if isinstance(cp, dict):
+                    key_env = str(cp.get("key_env") or "").strip()
+                    if key_env and source_env.get(key_env):
+                        key_envs_to_copy.add(key_env)
+
+    results: list[dict] = []
+    for profile in profiles:
+        try:
+            if profile == source:
+                results.append({"profile": profile, "success": True, "message": "源 profile，跳过"})
+                continue
+            for section in sections:
+                value = source_config.get(section) if isinstance(source_config, dict) else None
+                yaml_svc.write_section(profile, section, value)
+            if key_envs_to_copy:
+                updates: dict[str, str | None] = {k: source_env[k] for k in key_envs_to_copy}
+                env_svc.write_env(profile, updates)
+            copied_note = (
+                f"已复制 {len(sections)} 个 section，密钥 {len(key_envs_to_copy)} 个"
+                if key_envs_to_copy
+                else f"已复制 {len(sections)} 个 section"
+            )
+            results.append({"profile": profile, "success": True, "message": copied_note})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("admin models copy: profile=%s failed", profile)
+            results.append({"profile": profile, "success": False, "message": str(exc)})
+    return results
+
+
+def _apply_model_set(
+    yaml_svc: YamlService, profiles: list[str], values: dict[str, Any]
+) -> list[dict]:
+    results: list[dict] = []
+    for profile in profiles:
+        try:
+            for section, value in values.items():
+                yaml_svc.write_section(profile, section, value)
+            results.append({"profile": profile, "success": True, "message": f"已设置 {len(values)} 个 section"})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("admin models set: profile=%s failed", profile)
+            results.append({"profile": profile, "success": False, "message": str(exc)})
+    return results
+
+
+@admin_router.post("/models/copy")
+def models_copy(
+    request: Request,
+    body: ModelsCopyRequest,
+    user: User = Depends(require_admin),
+):
+    for section in body.sections:
+        if section not in MODEL_SECTIONS:
+            raise HTTPException(status_code=400, detail=f"Invalid section: {section}")
+
+    yaml_svc = YamlService()
+    results = _apply_model_copy(yaml_svc, body.source_profile, body.profiles, body.sections)
+    _audit(request, user, "admin:models:copy", body.profiles, results)
+    return {"results": results}
+
+
+@admin_router.post("/models/set")
+def models_set(
+    request: Request,
+    body: ModelsSetRequest,
+    user: User = Depends(require_admin),
+):
+    for section in body.values:
+        if section not in MODEL_SECTIONS:
+            raise HTTPException(status_code=400, detail=f"Invalid section: {section}")
+
+    yaml_svc = YamlService()
+    results = _apply_model_set(yaml_svc, body.profiles, body.values)
+    _audit(request, user, "admin:models:set", body.profiles, results)
+    return {"results": results}
+
+
+@admin_router.post("/soul/batch")
+def soul_batch(
+    request: Request,
+    body: SoulBatchRequest,
+    user: User = Depends(require_admin),
+):
+    profile_svc = ProfileService()
+    results: list[dict] = []
+    for profile in body.profiles:
+        try:
+            root = profile_svc.profile_root(profile)
+            soul_path = _resolve_soul_path(root)
+            soul_path.parent.mkdir(parents=True, exist_ok=True)
+            _backup_file(soul_path)
+            atomic_write_text(soul_path, body.content)
+            results.append({"profile": profile, "success": True, "message": "SOUL.md 已更新"})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("admin soul batch: profile=%s failed", profile)
+            results.append({"profile": profile, "success": False, "message": str(exc)})
+
+    _audit(request, user, "admin:soul:batch", body.profiles, results)
+    return {"results": results}

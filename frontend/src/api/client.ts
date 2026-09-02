@@ -18,7 +18,7 @@ export const apiClient = axios.create({
 // 页面之间来回切换时，后端配置型接口会被反复读取。这里对部分 GET 接口
 // 做 15s 内存缓存；需要强制刷新时在请求配置里传 `refresh: true` 绕过。
 const GET_CACHE_TTL = 15000;
-const CACHEABLE_PREFIXES = ['/config', '/channels', '/models', '/skills', '/plugins', '/system/versions'];
+const CACHEABLE_PREFIXES = ['/config', '/channels', '/models', '/skills'];
 
 interface GetCacheItem {
   ts: number;
@@ -130,51 +130,8 @@ export const api = {
     const { data } = await apiClient.put<{ success: boolean }>('/config/raw', { content }, { params: { profile } });
     return data;
   },
-  // ── Skills ──
-  toggleSkill: async (profile: string, name: string, enabled: boolean) => {
-    const { data } = await apiClient.post(`/skills/${name}/toggle`, { enabled }, { params: { profile } });
-    return data;
-  },
-  importSkill: async (profile: string, name: string, content: string, source = 'local') => {
-    const { data } = await apiClient.post('/skills/import', { name, content, source }, { params: { profile } });
-    return data;
-  },
-  externalDirs: async (profile: string) => {
-    const { data } = await apiClient.get<{ dirs: string[] }>('/skills/external-dirs', { params: { profile } });
-    return data.dirs;
-  },
-  updateExternalDirs: async (profile: string, dirs: string[]) => {
-    const { data } = await apiClient.put('/skills/external-dirs', { dirs }, { params: { profile } });
-    return data;
-  },
-  // ── Gateway ──
-  gatewayStatus: async (profile?: string) => {
-    const params = profile ? { profile } : {};
-    const { data } = await apiClient.get<{ statuses: Array<{ profile: string; running: boolean; pid: number | null; state: string | null; platforms: Record<string, unknown>; updated_at: string | null; started_at: number | null }> }>('/gateway/status', { params });
-    return data.statuses;
-  },
-  gatewayStart: async (profile: string) => {
-    const { data } = await apiClient.post<{ success: boolean; message: string; status?: unknown }>('/gateway/start', { profile });
-    return data;
-  },
-  gatewayStop: async (profile: string) => {
-    const { data } = await apiClient.post<{ success: boolean; message: string; status?: unknown }>('/gateway/stop', { profile });
-    return data;
-  },
-  gatewayRestart: async (profile: string) => {
-    const { data } = await apiClient.post<{ success: boolean; message: string; status?: unknown }>('/gateway/restart', { profile });
-    return data;
-  },
+  // ── Skills（只读：列表与详情）──
   // ── Admin (batch operations across profiles) ──
-  adminGatewayBatch: async (action: 'start' | 'stop' | 'restart', profiles: string[]) => {
-    // 批量操作涉及多个 profile 的 CLI 调用，放宽单次超时，避免前端过早中断
-    const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string; status?: unknown }> }>(
-      '/admin/gateway/batch',
-      { action, profiles },
-      { timeout: 120000 },
-    );
-    return data.results;
-  },
   adminModelsCopy: async (profiles: string[], sourceProfile: string, sections: string[]) => {
     const { data } = await apiClient.post<{ results: Array<{ profile: string; success: boolean; message: string }> }>('/admin/models/copy', { profiles, source_profile: sourceProfile, sections });
     return data.results;
@@ -227,11 +184,18 @@ export const api = {
       uptime_seconds: number;
       last_received_at: number | null;
       last_profiles_count: number;
-      last_hosts_count: number;
       total_payloads: number;
       receive_url: string;
       receive_token: string | null;
       port: number;
+      panels: Record<
+        string,
+        {
+          last_received_at: number | null;
+          last_profiles_count: number;
+          total_payloads: number;
+        }
+      >;
       send: {
         enabled: boolean;
         last_push_at: number | null;
@@ -260,113 +224,46 @@ export const api = {
     return data.logs;
   },
   // ── Profile Statistics ──
-  profileStats: async () => {
+  profileStats: async (range: string = 'all') => {
     const { data } = await apiClient.get<{
-      servers: Array<{
-        id: string;
-        name: string;
-        host: string | null;
-        username: string | null;
-        ip: string | null;
-        hermes_version: string | null;
-        components: Record<string, string | null>;
-        host_updated_at: number | null;
-        is_local: boolean;
-        online: boolean;
-        profiles: Array<{
-          id: number;
-          server_id: string;
-          host: string | null;
-          profile_name: string;
-          path: string | null;
-          gateway_status: string | null;
-          session_count: number;
-          total_tokens: number;
-          total_input_tokens: number;
-          total_output_tokens: number;
-          cache_hit_rate: number;
-          model_top5: Array<{ model: string; total_tokens: number; sessions: number }>;
-          provider_top5: Array<{ provider: string; total_tokens: number; sessions: number }>;
-          daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
-          current_config_version: number | null;
-          latest_config_version: number | null;
-          memory_available: boolean | null;
-          memory_provider: string | null;
-          updated_at: number;
-        }>;
+      profiles: Array<{
+        id: number;
+        profile_name: string;
+        path: string | null;
+        session_count: number;
+        total_tokens: number;
+        total_input_tokens: number;
+        total_output_tokens: number;
+        cache_hit_rate: number;
+        model_top5: Array<{ model: string; total_tokens: number; sessions: number }>;
+        provider_top5: Array<{ provider: string; total_tokens: number; sessions: number }>;
+        daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
+        updated_at: number;
+        source: 'local' | 'remote';
+        panel_name: string | null;
       }>;
-    }>('/profiles/aggregated');
+    }>('/profiles/aggregated', { params: { range } });
     return data;
   },
   refreshProfileStats: async () => {
     const { data } = await apiClient.post<{
-      servers: Array<{
-        id: string;
-        name: string;
-        host: string | null;
-        username: string | null;
-        ip: string | null;
-        hermes_version: string | null;
-        components: Record<string, string | null>;
-        host_updated_at: number | null;
-        is_local: boolean;
-        online: boolean;
-        profiles: Array<{
-          id: number;
-          server_id: string;
-          host: string | null;
-          profile_name: string;
-          path: string | null;
-          gateway_status: string | null;
-          session_count: number;
-          total_tokens: number;
-          total_input_tokens: number;
-          total_output_tokens: number;
-          cache_hit_rate: number;
-          model_top5: Array<{ model: string; total_tokens: number; sessions: number }>;
-          provider_top5: Array<{ provider: string; total_tokens: number; sessions: number }>;
-          daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
-          current_config_version: number | null;
-          latest_config_version: number | null;
-          memory_available: boolean | null;
-          memory_provider: string | null;
-          updated_at: number;
-        }>;
+      profiles: Array<{
+        id: number;
+        profile_name: string;
+        path: string | null;
+        session_count: number;
+        total_tokens: number;
+        total_input_tokens: number;
+        total_output_tokens: number;
+        cache_hit_rate: number;
+        model_top5: Array<{ model: string; total_tokens: number; sessions: number }>;
+        provider_top5: Array<{ provider: string; total_tokens: number; sessions: number }>;
+        daily_tokens: Array<{ day: string; total_tokens: number; input_tokens: number; output_tokens: number }>;
+        updated_at: number;
+        source: 'local' | 'remote';
+        panel_name: string | null;
       }>;
     }>('/profiles/aggregated/refresh');
-    return data;
-  },
-  systemVersions: async () => {
-    const { data } = await apiClient.get<Record<string, string>>('/system/versions');
-    return data;
-  },
-  // ── Hermes 更新 ──
-  checkHermesUpdate: async () => {
-    const { data } = await apiClient.get<{
-      current_version: string;
-      latest_version: string | null;
-      latest_version_tag?: string;
-      release_notes?: string;
-      published_at?: string;
-      release_url?: string;
-      check_output?: string;
-      has_update: boolean;
-      error?: string;
-    }>('/system/hermes-update');
-    return data;
-  },
-  startHermesUpgrade: async () => {
-    const { data } = await apiClient.post<{ success: boolean; message: string }>('/system/hermes-upgrade');
-    return data;
-  },
-  hermesUpgradeStatus: async () => {
-    const { data } = await apiClient.get<{
-      running: boolean;
-      success: boolean | null;
-      started_at: number | null;
-      finished_at: number | null;
-      output: string;
-    }>('/system/hermes-upgrade/status');
     return data;
   },
 };

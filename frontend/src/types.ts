@@ -20,19 +20,6 @@ export interface EnvEntry {
   value: string;
 }
 
-export interface SystemStats {
-  cpu_percent: number;
-  memory: { percent: number; total: number; used: number; available: number };
-  disk: { percent: number; total: number; used: number; free: number };
-  uptime_seconds: number;
-}
-
-export interface StatsHistoryEntry {
-  timestamp: number;
-  cpu_percent: number;
-  memory_percent: number;
-}
-
 export interface TokenSummary {
   total_sessions: number;
   total_input_tokens: number;
@@ -81,12 +68,6 @@ export interface SkillRecord {
   origin?: string;
 }
 
-export interface PluginRecord {
-  name: string;
-  value: unknown;
-  enabled: boolean;
-}
-
 export interface ProfileDetail {
   [key: string]: string;
 }
@@ -97,10 +78,6 @@ export interface UsersResponse {
 
 export interface SkillsResponse {
   skills: SkillRecord[];
-}
-
-export interface PluginsResponse {
-  plugins: Record<string, unknown>;
 }
 
 export interface ProfilesResponse {

@@ -1,77 +1,15 @@
-# Hermes Panel Configuration
-#
-# Place this file at ~/.config/hermes-panel/config.yaml (loaded automatically on startup).
+# Hermes Panel 配置示例（仅作参考，程序不会自动复制本文件）。
+# 程序实际读取当前目录的 config.yaml，缺失时自动生成最小化配置。
 
-# Path to Hermes Agent home directory (contains state.db, config.yaml, etc.)
+# Hermes 数据目录。Docker 下由 compose 挂载宿主机 ~/.hermes 到容器 /root/.hermes。
 hermes_path: ~/.hermes
 
-# Production server port. Defaults to 8090.
+# 服务端口，默认 8090。
 port: 8090
 
-# SQLite database path for hermes-panel's own data.
-# All panel tables (users, system metrics, profile statistics and host info)
-# live in this single database file.
-# Default: ~/.config/hermes-panel/hermes-panel.db
-db_path: ~/.config/hermes-panel/hermes-panel.db
+# 本面板唯一标识，用于在接收端区分不同来源面板。
+# 缺省时首次启动自动生成唯一 ID 并回写；如需自定义可取消注释。
+# panel_name: my-panel
 
-# Log file location (rotating, max 5 files x 5 MB each).
-# Default: ~/.config/hermes-panel/hermes-panel.log
-log_file: ~/.config/hermes-panel/hermes-panel.log
-log_level: INFO
-
-# JWT secret for authentication tokens (CHANGE THIS in production!)
-jwt_secret: changeme
-
-# Default admin password (change this in production!)
-default_admin_password: changeme
-
-# Components whose versions are queried via CLI for the dashboard.
-# Each entry:
-#   name:    Display key in the versions dict (default: same as command)
-#   command: CLI binary to execute
-#   args:    Arguments passed to the command (default: ["--version"])
-#   regex:   Optional regex to extract a version substring from the output.
-#            If the regex has a capture group, group(1) is used; otherwise
-#            group(0) is used.  When omitted, the first non-empty line of
-#            output is used as-is.
-component_versions:
-  - name: hermes
-    command: hermes
-    args: ["--version"]
-    regex: 'v[\d.]+(?:\s*\([^)]+\))?'
-  - name: node
-    command: node
-    args: ["--version"]
-  - name: npm
-    command: npm
-    args: ["--version"]
-  - name: git
-    command: git
-    args: ["--version"]
-    regex: '(\d+\.\d+(?:\.\d+)?)'
-  - name: lark-cli
-    command: lark-cli
-    args: ["--version"]
-    regex: '(\d+\.\d+(?:\.\d+)?)'
-  - name: quectel-cli
-    command: quectel-cli
-    args: ["--version"]
-    regex: 'v?(\d+\.\d+(?:\.\d+)?)'
-
-# Data sync to another hermes-panel instance.
-# When enabled, local host_info and profile_info tables are periodically
-# POSTed to the target panel's /api/v1/sync endpoint.
-# Inbound sync is accepted at /api/v1/sync/ (panel-to-panel and external
-# systems / CI / monitoring agents alike).
-# Sending and receiving use separate, explicitly named configuration groups.
-sync:
-  send:
-    enabled: false
-    # endpoints:
-    #   - endpoint: http://127.0.0.1:8650/api/v1/sync/
-    #     token: presented to the target panel as Bearer on push
-    #     enabled: true  # optional per-endpoint switch (default: true)
-    interval: 600
-  receive:
-    enabled: false
-    # token: verified on /sync/ inbound
+# Panel 自身数据目录（JSON 数据 / 日志 / 账号），默认 ./data。
+# data_dir: ./data

@@ -25,14 +25,6 @@ export const profileCategories: ProfileCategory[] = [
     ],
   },
   {
-    key: 'plugins',
-    label: '插件',
-    sections: [
-      { key: 'plugins', label: 'Plugins' },
-      { key: 'hermes_lark_streaming', label: 'Lark Streaming' },
-    ],
-  },
-  {
     key: 'memory',
     label: '记忆',
     sections: [],

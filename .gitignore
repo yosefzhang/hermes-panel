@@ -68,6 +68,7 @@ config.yaml
 # 测试和覆盖率
 .pytest_cache/
 .pytest_tmp/
+.test_data/
 .coverage
 htmlcov/
 .nyc_output/
@@ -83,6 +84,9 @@ coverage/
 
 # Hermes 运行数据目录
 .hermes/
+
+# 面板运行时数据目录（users.json / local_profiles.json / 日志，含账号凭据）
+data/
 
 # Agent skills are part of the repository and should be uploaded.
 !.agents/

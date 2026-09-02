@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -10,60 +9,29 @@ from pathlib import Path
 
 from fastapi import Request
 
-# hermes-panel is a management tool and must not be bound to any Hermes
-# profile. Force HERMES_HOME to the current user's base Hermes directory
-# and drop any inherited profile binding so subprocess hermes calls don't
-# fall back to (or write into) the wrong profile.
-os.environ["HERMES_HOME"] = str(Path.home() / ".hermes")
-os.environ.pop("HERMES_PROFILE", None)
-
-# hermes-agent discovers bundled plugins on import and logs warnings for
-# optional platform plugins (slack-platform, wecom-platform, etc.) that
-# hermes-panel does not need. Raise the threshold to keep startup logs clean.
-logging.getLogger("hermes_cli.plugins").setLevel(logging.ERROR)
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
-from backend.api import (
-    admin,
-    auth,
-    channels,
-    config,
-    gateway,
-    memory,
-    models_config,
-    plugins,
-    profile_files,
-    profile_stats,
-    profiles,
-    skills,
-    sync,
-    system,
-    tokens,
-    users,
-)
+from backend.api import auth, hermes, system
 from backend.config import Settings, get_settings
-from backend.db.database import init_database
-from backend.services.host_info_service import HostInfoService
-from backend.services.profile_stats_service import ProfileStatsService
-from backend.services.sync_service import SyncService, ensure_receive_token, get_receive_status, initialize_receive_state_from_settings, initialize_send_state_from_settings, set_receive_enabled, set_send_enabled
+from backend.services.system import (
+    ProfileStatsService,
+    SyncService,
+    ensure_receive_token,
+    initialize_receive_state_from_settings,
+    initialize_send_state_from_settings,
+)
+from backend.store import init_storage
 
 
 logger = logging.getLogger(__name__)
-# Profile stats and host metadata are now stored in separate tables, so they
-# refresh on independent cadences:
-#   - profile_info: fast (gateway + token totals) every 10 min, full (all
-#     fields) every 1 h — both owned by ProfileStatsService.
-#   - host_info: host-level metadata (hermes version, components) every 1 h
-#     only — owned by HostInfoService. The fast cycle no longer touches the
-#     host_info table.
-_FAST_REFRESH_INTERVAL = 600   # 10 min: profile_info gateway status + token totals
-_FULL_REFRESH_INTERVAL = 3600  # 1 h: profile_info full + host_info metadata
+# Profile stats refresh on two cadences:
+#   - fast (token totals) every 10 min.
+#   - full (model/provider breakdowns, daily tokens) every 1 h.
+_FAST_REFRESH_INTERVAL = 600   # 10 min: token totals
+_FULL_REFRESH_INTERVAL = 3600  # 1 h: full profile stats
 
 # A typical uvicorn dev session already configures its own handlers; avoid
 # touching logging when we detect a non-empty child logger config (e.g.
@@ -131,14 +99,14 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
     setup_logging(settings)
 
     if initialize_database:
-        init_database(settings)
+        init_storage(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Re-run initialization on startup as well: this matters when
         # `initialize_database=False` is used (e.g. tests) but the app
         # still wants the schema and default admin ready before serving.
-        await asyncio.to_thread(init_database, app.state.settings)
+        await asyncio.to_thread(init_storage, app.state.settings)
 
         # Restore receive-sync runtime state from persisted settings.
         initialize_receive_state_from_settings(app.state.settings)
@@ -148,14 +116,11 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
         # Restore send-sync runtime state from persisted settings.
         initialize_send_state_from_settings(app.state.settings)
 
-        # Start local data collection. Profile stats and host metadata now
-        # live in separate tables (profile_info / host_info) refreshed on
-        # independent cadences, but still share one background loop so the
-        # two stay timestamp-coherent within the full cycle.
+        # Start local data collection. Profile stats refresh on two cadences
+        # (fast every 10 min, full every 1 h) in one background loop.
         stats_service = ProfileStatsService(app.state.settings)
-        host_info_service = HostInfoService(app.state.settings)
         local_data_task = asyncio.create_task(
-            _refresh_local_data(stats_service, host_info_service)
+            _refresh_local_data(stats_service)
         )
 
         # Start sync task. The loop stays alive for the whole process
@@ -218,69 +183,37 @@ def create_app(settings: Settings | None = None, initialize_database: bool = Tru
     )
 
     routers = [
-        auth.router,
-        users.router,
-        config.router,
-        profile_files.router,
-        profile_stats.router,
-        profiles.router,
-        skills.router,
-        plugins.router,
-        models_config.router,
-        channels.router,
-        memory.router,
-        tokens.router,
-        system.router,
+        auth.auth_router,
+        auth.users_router,
+        hermes.config_router,
+        hermes.profile_files_router,
+        system.profile_stats_router,
+        hermes.profiles_router,
+        hermes.skills_router,
+        hermes.models_router,
+        hermes.channels_router,
+        hermes.memory_router,
+        auth.tokens_router,
+        system.system_router,
         system.audit_router,
-        gateway.router,
-        sync.router,
-        admin.router,
+        system.sync_router,
+        hermes.admin_router,
     ]
 
     for router in routers:
         app.include_router(router, prefix=settings.api_prefix)
-
-    dist_path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-    if dist_path.exists():
-        assets_path = dist_path / "assets"
-        if assets_path.exists():
-            app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
-
-        @app.get("/{full_path:path}", include_in_schema=False)
-        async def serve_frontend(full_path: str):
-            requested_path = dist_path / full_path
-            if full_path and requested_path.is_file():
-                return FileResponse(requested_path)
-            # The entrypoint contains hashed asset names and must be fetched
-            # again after each production build; otherwise browsers can keep
-            # an old index that references deleted chunks.
-            return FileResponse(
-                dist_path / "index.html",
-                headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0",
-                },
-            )
 
     return app
 
 
 async def _refresh_local_data(
     stats_service: ProfileStatsService,
-    host_info_service: HostInfoService,
 ) -> None:
     """Background loop with two cadences:
 
-    - Every 10 min: fast profile stats (gateway status + token totals) only.
-      The host_info table is intentionally *not* refreshed on the fast cycle;
-      its data (hermes version, component versions) changes slowly.
-    - Every 1 hour: full profile stats (memory status, config version,
-      model/provider breakdowns, daily tokens) + host info refresh.
-
-    Host metadata is refreshed alongside the full cycle so the dashboard
-    reflects version changes reasonably quickly without hammering the CLI
-    sub-processes every 10 minutes.
+    - Every 10 min: fast profile stats (token totals) only.
+    - Every 1 hour: full profile stats (model/provider breakdowns, daily
+      tokens).
     """
     logger.info(
         "Local data refresh loop starting (fast=%ds, full=%ds)",
@@ -292,7 +225,6 @@ async def _refresh_local_data(
     try:
         stats_service.cleanup_stale_records()
         await asyncio.to_thread(stats_service.collect_local_stats)
-        await asyncio.to_thread(host_info_service.refresh_local)
     except Exception:
         logger.exception("Initial full data collection failed")
 
@@ -305,7 +237,6 @@ async def _refresh_local_data(
             if elapsed_since_full >= _FULL_REFRESH_INTERVAL:
                 logger.info("Local data refresh cycle (full) start")
                 await asyncio.to_thread(stats_service.collect_local_stats)
-                await asyncio.to_thread(host_info_service.refresh_local)
                 last_full = time.time()
                 logger.info("Local data refresh cycle (full) done")
             else:

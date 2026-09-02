@@ -65,11 +65,18 @@ function SyncSettingsSection() {
     uptime_seconds: number;
     last_received_at: number | null;
     last_profiles_count: number;
-    last_hosts_count: number;
     total_payloads: number;
     receive_url: string;
     receive_token: string | null;
     port: number;
+    panels: Record<
+      string,
+      {
+        last_received_at: number | null;
+        last_profiles_count: number;
+        total_payloads: number;
+      }
+    >;
     send: {
       enabled: boolean;
       last_push_at: number | null;
@@ -519,6 +526,34 @@ function SyncSettingsSection() {
                 </TableBody>
               </Table>
 
+              {runtimeStatus?.panels && Object.keys(runtimeStatus.panels).length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">各来源面板接收统计</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="whitespace-nowrap">面板标识</TableHead>
+                        <TableHead className="whitespace-nowrap text-right">最近 profiles 数</TableHead>
+                        <TableHead className="whitespace-nowrap text-right">累计接收</TableHead>
+                        <TableHead className="whitespace-nowrap">最近接收时间</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Object.entries(runtimeStatus.panels).map(([panelName, panel]) => (
+                        <TableRow key={panelName}>
+                          <TableCell className="font-mono text-xs break-all whitespace-normal">{panelName}</TableCell>
+                          <TableCell className="text-right whitespace-nowrap">{panel.last_profiles_count ?? 0}</TableCell>
+                          <TableCell className="text-right whitespace-nowrap">{panel.total_payloads ?? 0}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">
+                            {panel.last_received_at ? new Date(panel.last_received_at * 1000).toLocaleString() : '暂无'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
               {/* 用法示例 —— 可收起展开（与发送侧共用组件） */}
               <SyncUsageExample url={runtimeStatus?.receive_url || ''} token={receiveToken} />
             </div>
@@ -562,28 +597,11 @@ curl -X POST ${url || '<ENDPOINT_URL>'} \\
 
 \`\`\`json
 {
-  "server_id": "host|user|ip",
   "synced_at": 1700000000,
-  "hosts": [
-    {
-      "host": "hostname",
-      "username": "user",
-      "ip": "10.0.0.10",
-      "hermes_version": "v1.0.0",
-      "components": {
-        "hermes": "v1.0.0",
-        "node": "v20.0.0",
-        "npm": "10.0.0",
-        "git": "2.40.0"
-      }
-    }
-  ],
   "profiles": [
     {
-      "host": "hostname",
-      "username": "user",
-      "ip": "10.0.0.10",
       "profile_name": "default",
+      "path": "/root/.hermes",
       "session_count": 12,
       "total_tokens": 1024000,
       "total_input_tokens": 512000,

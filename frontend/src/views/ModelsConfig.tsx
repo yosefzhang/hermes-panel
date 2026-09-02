@@ -137,19 +137,19 @@ function textToHeaders(text?: string): Record<string, string> {
 }
 
 const AUX_LABELS: Record<string, string> = {
-  vision: '视觉分析 (Vision)',
-  compression: '上下文压缩 (Compression)',
-  web_extract: '网页提取 (Web Extract)',
-  approval: '命令审批 (Approval)',
-  mcp: 'MCP 管理 (MCP)',
-  title_generation: '标题生成 (Title Generation)',
-  memory_query_rewrite: '记忆查询重写 (Memory Query Rewrite)',
-  tts_audio_tags: 'TTS 标签 (TTS Audio Tags)',
-  skills_hub: '技能中心 (Skills Hub)',
-  triage_specifier: '看板分诊指定 (Triage Specifier)',
-  kanban_decomposer: '看板任务分解 (Kanban Decomposer)',
-  profile_describer: 'Profile 描述 (Profile Describer)',
-  curator: '后台维护 (Curator)',
+  vision: '视觉分析 ( Vision )',
+  compression: '上下文压缩 ( Compression )',
+  web_extract: '网页提取 ( Web Extract )',
+  approval: '命令审批 ( Approval )',
+  mcp: 'MCP 管理 ( MCP )',
+  title_generation: '标题生成 ( Title Generation )',
+  memory_query_rewrite: '记忆查询重写 ( Memory Query Rewrite )',
+  tts_audio_tags: 'TTS 标签 ( TTS Audio Tags )',
+  skills_hub: '技能中心 ( Skills Hub )',
+  triage_specifier: '看板分诊指定 ( Triage Specifier )',
+  kanban_decomposer: '看板任务分解 ( Kanban Decomposer )',
+  profile_describer: 'Profile 描述 ( Profile Describer )',
+  curator: '后台维护 ( Curator )',
 };
 
 function ProvidersTab({

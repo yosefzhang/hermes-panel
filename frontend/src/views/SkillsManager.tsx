@@ -4,11 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AlertCircle, ChevronDown, Search, Puzzle } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
 import { apiClient } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useConfigStore } from '../store/configStore';
@@ -22,15 +20,14 @@ import type { SkillRecord, SkillsResponse } from '../types';
 type OriginMeta = { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; hint: string };
 
 const ORIGIN_META: Record<string, OriginMeta> = {
-  agent_created: { label: 'Agent 创建', variant: 'default', hint: 'Hermes Agent 在本地为你自动创建的 skill' },
-  agent_modified: { label: 'Agent 修改', variant: 'default', hint: 'Agent 修改过官方内置 skill（可用 hermes skills diff 查看）' },
-  user: { label: '我创建', variant: 'default', hint: '你亲自撰写的 skill（frontmatter author=Yosef/Yosephine）' },
-  community: { label: '社区/第三方', variant: 'secondary', hint: '来自 Skill Hub、外部目录或第三方作者' },
-  official: { label: '官方内置', variant: 'outline', hint: '随 hermes-agent 发行的官方 skill，未被修改' },
+  local: { label: '本地', variant: 'default', hint: '本机 skills 目录下的本地 skill' },
+  modified: { label: '已修改', variant: 'default', hint: '官方内置 skill 被修改过' },
+  community: { label: '社区/第三方', variant: 'secondary', hint: '来自 Skill Hub 或外部目录' },
+  official: { label: '官方内置', variant: 'outline', hint: '随 hermes 发行的官方 skill，未被修改' },
   unknown: { label: '未分类', variant: 'secondary', hint: '无法识别来源' },
 };
 
-const ORIGIN_ORDER = ['agent_created', 'agent_modified', 'user', 'community', 'official', 'unknown'];
+const ORIGIN_ORDER = ['local', 'modified', 'community', 'official', 'unknown'];
 
 const ALL_KEY = '__all__';
 
@@ -134,13 +131,9 @@ interface SkillListItemProps {
   skill: SkillRecord;
   selected: boolean;
   onSelect: (skill: SkillRecord) => void;
-  onToggle: (name: string, enabled: boolean) => void;
-  actionLoading: string | null;
 }
 
-function SkillListItem({
-  skill, selected, onSelect, onToggle, actionLoading,
-}: SkillListItemProps) {
+function SkillListItem({ skill, selected, onSelect }: SkillListItemProps) {
   return (
     <div
       onClick={() => onSelect(skill)}
@@ -158,26 +151,17 @@ function SkillListItem({
           </p>
         )}
       </div>
-      <div onClick={(e) => e.stopPropagation()}>
-        <Switch
-          checked={skill.enabled}
-          disabled={actionLoading === `toggle:${skill.name}`}
-          onCheckedChange={(checked) => onToggle(skill.name, checked)}
-        />
-      </div>
     </div>
   );
 }
 
 // ── 主页面 ─────────────────────────────────────────
 export default function SkillsManager() {
-  const { toast } = useToast();
   const { activeProfile } = useConfigStore();
 
   const [search, setSearch] = useState('');
   const [activeOrigin, setActiveOrigin] = useState<string>(ALL_KEY);
   const [selectedSkill, setSelectedSkill] = useState<SkillRecord | null>(null);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchSkills = useCallback(
     (force?: boolean) =>
@@ -190,7 +174,7 @@ export default function SkillsManager() {
     [activeProfile],
   );
 
-  const { data: skills, loading, error, execute: reload } = useApi(fetchSkills, [activeProfile]);
+  const { data: skills, loading, error } = useApi(fetchSkills, [activeProfile]);
 
   // 计算每个 origin 的数量
   const originCounts = useMemo(() => {
@@ -240,26 +224,6 @@ export default function SkillsManager() {
       return a.localeCompare(b);
     });
   }, [filtered]);
-
-  const handleToggle = async (name: string, enabled: boolean) => {
-    setActionLoading(`toggle:${name}`);
-    try {
-      await apiClient.post(`/skills/${name}/toggle`, { enabled }, { params: { profile: activeProfile } });
-      toast({
-        title: '成功',
-        description: enabled ? '已启用' : '已停用',
-      });
-      reload(true);
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: '错误',
-        description: '操作失败',
-      });
-    } finally {
-      setActionLoading(null);
-    }
-  };
 
   return (
     <PageContainer>
@@ -347,8 +311,6 @@ export default function SkillsManager() {
                               skill={skill}
                               selected={selectedSkill?.name === skill.name}
                               onSelect={setSelectedSkill}
-                              onToggle={handleToggle}
-                              actionLoading={actionLoading}
                             />
                           ))}
                         </div>
