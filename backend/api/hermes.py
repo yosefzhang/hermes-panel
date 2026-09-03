@@ -1134,27 +1134,27 @@ def get_provider_models(
                     configured_models = [str(item) for item in raw_models if item]
                 break
 
-    if configured_models:
+    def _fallback_result(error: str | None) -> "ProviderModelsResult":
+        """探测失败 / 无 Base URL 时，用静态 custom_providers[].models 兜底。"""
         return ProviderModelsResult(
             name=str(provider.get("name", name)),
             base_url=str(provider.get("base_url") or ""),
             key_env=str(provider.get("key_env", "")),
             has_key=bool(provider.get("has_key")),
             api_mode=str(provider.get("api_mode") or ""),
-            status_code=200,
+            status_code=200 if configured_models else None,
             models=[_normalize_model_item(m) for m in sorted(set(configured_models))],
+            error=error,
         )
 
+    # 静态 models 仅作兜底：只要配了 Base URL 就一律实时探测 {base_url}/models。
+    # 否则（旧行为：有静态 models 直接短路返回）会把面板模型列表冻成 config 快照——
+    # 表现为 context/vision 字段全空、且残留上游已下线的过期别名（如 uni-api 的 z/glm-*）。
     base_url = str(provider.get("base_url") or "").rstrip("/")
     if not base_url:
-        return ProviderModelsResult(
-            name=str(provider.get("name", name)),
-            base_url="",
-            key_env=str(provider.get("key_env", "")),
-            has_key=bool(provider.get("has_key")),
-            api_mode=str(provider.get("api_mode") or ""),
-            error="未配置 Base URL",
-        )
+        if configured_models:
+            return _fallback_result("未配置 Base URL，返回静态模型列表")
+        return _fallback_result("未配置 Base URL")
 
     key_env = str(provider.get("key_env", ""))
     api_key = env_vars.get(key_env, "") if key_env else ""
@@ -1183,6 +1183,9 @@ def get_provider_models(
         session.trust_env = False
         resp = session.get(models_url, headers=headers, timeout=15)
         if resp.status_code != 200:
+            probe_err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            if configured_models:
+                return _fallback_result(f"{probe_err}（已回退静态模型列表）")
             return ProviderModelsResult(
                 name=str(provider.get("name", name)),
                 base_url=base_url,
@@ -1190,7 +1193,7 @@ def get_provider_models(
                 has_key=bool(api_key),
                 api_mode=str(provider.get("api_mode") or ""),
                 status_code=resp.status_code,
-                error=f"HTTP {resp.status_code}: {resp.text[:300]}",
+                error=probe_err,
             )
 
         payload = resp.json() if resp.text else {}
@@ -1215,6 +1218,9 @@ def get_provider_models(
             models=models[:200],
         )
     except RequestException as exc:
+        probe_err = f"请求失败: {str(exc)}"
+        if configured_models:
+            return _fallback_result(f"{probe_err}（已回退静态模型列表）")
         return ProviderModelsResult(
             name=str(provider.get("name", name)),
             base_url=base_url,
@@ -1222,7 +1228,7 @@ def get_provider_models(
             has_key=bool(api_key),
             api_mode=str(provider.get("api_mode") or ""),
             status_code=0,
-            error=f"请求失败: {str(exc)}",
+            error=probe_err,
         )
 
 
