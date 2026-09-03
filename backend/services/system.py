@@ -63,6 +63,15 @@ class StateReader:
         cutoff = (datetime.now() - timedelta(days=days)).timestamp()
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as connection:
             connection.row_factory = sqlite3.Row
+            if not _table_exists(connection, "sessions"):
+                logger.debug("aggregate_token_stats: no sessions table in %s, skip", db_path)
+                return {
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cost_usd": 0.0,
+                    "by_model": [],
+                    "daily": [],
+                }
             rows = connection.execute(
                 """
                 SELECT
@@ -148,6 +157,10 @@ class StateReader:
             # 优先 session_model_usage（实时 per-request 记账，含进行中的 session）；
             # 没有该表的旧安装回退到 sessions 聚合。
             has_usage_table = _table_exists(connection, "session_model_usage")
+            # state.db 可能根本不是 session 库（如被其它子系统复用），两表皆无时跳过统计而非抛异常。
+            if not has_usage_table and not _table_exists(connection, "sessions"):
+                logger.debug("get_dashboard_data: no session tables in %s, skip", db_path)
+                return empty
             source_table = "session_model_usage" if has_usage_table else "sessions"
             logger.debug("get_dashboard_data: profile=%s using source=%s", profile, source_table)
 
