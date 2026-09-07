@@ -118,6 +118,13 @@ function useDashboardStats(data: DashboardData | null) {
       .sort()
       .map((day) => ({ day, ...dayMap[day] }));
 
+    // 按 Profile 分组的 daily 趋势
+    const profileDailyTrends = allProfiles.map((p) => ({
+      id: p.id,
+      name: profileLabel(p),
+      daily_tokens: p.daily_tokens ?? [],
+    }));
+
     return {
       totalTokens,
       totalInputTokens,
@@ -128,6 +135,7 @@ function useDashboardStats(data: DashboardData | null) {
       modelTop5,
       dailyTrend,
       profileCount,
+      profileDailyTrends,
     };
   }, [data]);
 }
@@ -291,7 +299,33 @@ interface DailyTrendPoint {
   output_tokens: number;
 }
 
-function DailyTrendCard({ title, data }: { title: string; data: DailyTrendPoint[] }) {
+interface ProfileDailyTrend {
+  id: number;
+  name: string;
+  daily_tokens: DailyTrendPoint[];
+}
+
+function DailyTrendCard({
+  title,
+  allData,
+  profileDailyTrends,
+  selectedProfileId,
+  onProfileChange,
+}: {
+  title: string;
+  allData: DailyTrendPoint[];
+  profileDailyTrends: ProfileDailyTrend[];
+  selectedProfileId: number | null; // null = 全部
+  onProfileChange: (id: number | null) => void;
+}) {
+  const data = useMemo(() => {
+    if (selectedProfileId === null) {
+      return allData;
+    }
+    const profile = profileDailyTrends.find((p) => p.id === selectedProfileId);
+    return profile?.daily_tokens ?? [];
+  }, [allData, profileDailyTrends, selectedProfileId]);
+
   const hasData = data.some((d) => d.total_tokens > 0);
   const option = useMemo(
     () => ({
@@ -316,7 +350,7 @@ function DailyTrendCard({ title, data }: { title: string; data: DailyTrendPoint[
       },
       series: [
         {
-          name: '总 Token',
+          name: selectedProfileId === null ? '总 Token' : 'Token',
           type: 'line' as const,
           data: data.map((d) => d.total_tokens),
           smooth: true,
@@ -333,16 +367,34 @@ function DailyTrendCard({ title, data }: { title: string; data: DailyTrendPoint[
         },
       ],
     }),
-    [data]
+    [data, selectedProfileId]
   );
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-primary" />
-          {title}
-        </CardTitle>
+        <div className="flex items-center justify-between gap-4">
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-primary" />
+            {title}
+          </CardTitle>
+          <Select
+            value={selectedProfileId?.toString() ?? 'all'}
+            onValueChange={(value) => onProfileChange(value === 'all' ? null : parseInt(value, 10))}
+          >
+            <SelectTrigger className="w-[200px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部 Profile</SelectItem>
+              {profileDailyTrends.map((p) => (
+                <SelectItem key={p.id} value={p.id.toString()}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </CardHeader>
       <CardContent>
         {hasData ? (
@@ -359,6 +411,7 @@ function DailyTrendCard({ title, data }: { title: string; data: DailyTrendPoint[
 
 export default function Dashboard() {
   const [range, setRange] = useState<RangeValue>('today');
+  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null); // null = 全部
   const fetchDashboard = useCallback(() => api.profileStats(range), [range]);
   const { data, loading, error } = useApi<DashboardData>(fetchDashboard, [range]);
   const stats = useDashboardStats(data);
@@ -456,7 +509,13 @@ export default function Dashboard() {
 
           {/* Token 用量趋势 - 今日时隐藏 */}
           {range !== 'today' && (
-            <DailyTrendCard title={`Token 用量趋势（${rangeLabel}）`} data={stats.dailyTrend} />
+            <DailyTrendCard
+              title={`Token 用量趋势（${rangeLabel}）`}
+              allData={stats.dailyTrend}
+              profileDailyTrends={stats.profileDailyTrends}
+              selectedProfileId={selectedProfileId}
+              onProfileChange={setSelectedProfileId}
+            />
           )}
         </div>
       )}
