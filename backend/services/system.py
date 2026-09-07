@@ -395,7 +395,7 @@ _MODEL_DAILY_DAYS = 30
 _STALE_RECORD_SECONDS = 24 * 60 * 60
 _TOP_N = 5
 
-_RANGES = {"7d": 7, "30d": 30, "all": None}
+_RANGES = {"today": 1, "7d": 7, "30d": 30, "all": None}
 
 _PROFILE_KEY_FIELDS = ("profile_name",)
 

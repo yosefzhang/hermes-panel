@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Target,
   TrendingUp,
+  Users,
   Zap,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,6 +49,7 @@ interface DashboardData {
 }
 
 const RANGE_OPTIONS = [
+  { value: 'today', label: '今日' },
   { value: '7d', label: '近 7 天' },
   { value: '30d', label: '近 30 天' },
   { value: 'all', label: '总统计' },
@@ -125,6 +127,7 @@ function useDashboardStats(data: DashboardData | null) {
       profileRank,
       modelTop5,
       dailyTrend,
+      profileCount,
     };
   }, [data]);
 }
@@ -355,7 +358,7 @@ function DailyTrendCard({ title, data }: { title: string; data: DailyTrendPoint[
 }
 
 export default function Dashboard() {
-  const [range, setRange] = useState<RangeValue>('30d');
+  const [range, setRange] = useState<RangeValue>('today');
   const fetchDashboard = useCallback(() => api.profileStats(range), [range]);
   const { data, loading, error } = useApi<DashboardData>(fetchDashboard, [range]);
   const stats = useDashboardStats(data);
@@ -394,7 +397,15 @@ export default function Dashboard() {
       {!loading && data && (
         <div className="space-y-6">
           {/* 小单元卡片：一行展示核心指标 */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+            <MetricCard
+              metric={{
+                icon: Users,
+                label: 'Profile 数',
+                value: String(stats.profileCount),
+                iconClass: 'bg-green-100 text-green-600',
+              }}
+            />
             <MetricCard
               metric={{
                 icon: MessageSquare,
@@ -443,8 +454,10 @@ export default function Dashboard() {
             <ModelTop5Card data={stats.modelTop5} />
           </div>
 
-          {/* Token 用量趋势 */}
-          <DailyTrendCard title={`Token 用量趋势（${rangeLabel}）`} data={stats.dailyTrend} />
+          {/* Token 用量趋势 - 今日时隐藏 */}
+          {range !== 'today' && (
+            <DailyTrendCard title={`Token 用量趋势（${rangeLabel}）`} data={stats.dailyTrend} />
+          )}
         </div>
       )}
     </PageContainer>
