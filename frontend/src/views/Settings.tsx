@@ -32,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Key, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, PenLine } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import PageHeader from '../components/PageHeader';
 import Loading from '../components/Loading';
@@ -470,10 +470,7 @@ function SyncSettingsSection() {
                 />
               </div>
               <p className="text-sm text-muted-foreground">
-                允许其他 hermes-panel 将数据同步到本机
-              </p>
-              <p className="text-xs text-muted-foreground">
-                支持 panel 间与外部系统通过 POST 推送数据
+                允许其他 hermes-panel 或外部系统通过 POST 推送数据同步到本机
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -754,7 +751,7 @@ function UserSettingsSection() {
   const { toast } = useToast();
   const { user: currentUser } = useAuthStore();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -763,7 +760,8 @@ function UserSettingsSection() {
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState('user');
   const [newProfiles, setNewProfiles] = useState<string[]>(['default']);
-  const [newPasswordValue, setNewPasswordValue] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editPassword, setEditPassword] = useState('');
 
   const fetchUsers = useCallback(
     () => apiClient.get<UsersResponse>('/users').then((res) => res.data.users),
@@ -813,26 +811,46 @@ function UserSettingsSection() {
       });
   };
 
-  const handleChangePassword = () => {
-    if (!selectedUser || !newPasswordValue) {
-      toast({ variant: 'destructive', title: '错误', description: '请输入新密码' });
+  const handleUpdateUser = () => {
+    if (!selectedUser) return;
+    const username = editUsername.trim();
+    if (!username) {
+      toast({ variant: 'destructive', title: '错误', description: '用户名不能为空' });
       return;
     }
-    if (newPasswordValue.length < 3) {
+    if (editPassword && editPassword.length < 3) {
       toast({ variant: 'destructive', title: '错误', description: '密码至少 3 个字符' });
+      return;
+    }
+    const changed = username !== selectedUser.username || editPassword !== '';
+    if (!changed) {
+      toast({ variant: 'destructive', title: '错误', description: '未修改任何内容' });
       return;
     }
     setSubmitting(true);
     apiClient
-      .put(`/users/${selectedUser.id}/password`, { new_password: newPasswordValue })
-      .then(() => {
-        toast({ title: '成功', description: '密码已修改' });
-        setPasswordDialogOpen(false);
-        setSelectedUser(null);
-        setNewPasswordValue('');
+      .put(`/users/${selectedUser.id}`, {
+        username,
+        ...(editPassword ? { password: editPassword } : {}),
       })
-      .catch(() => {
-        toast({ variant: 'destructive', title: '错误', description: '修改密码失败' });
+      .then(() => {
+        // 修改的是自己时，同步更新全局登录态中的用户名
+        if (currentUser && selectedUser.id === currentUser.id && username !== currentUser.username) {
+          useAuthStore.setState({ user: { ...currentUser, username } });
+        }
+        toast({ title: '成功', description: '用户已修改' });
+        setEditDialogOpen(false);
+        setSelectedUser(null);
+        setEditUsername('');
+        setEditPassword('');
+        reload();
+      })
+      .catch((err: unknown) => {
+        const message =
+          (err && typeof err === 'object' && 'response' in err
+            ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+            : undefined) || '修改失败';
+        toast({ variant: 'destructive', title: '错误', description: message });
       })
       .finally(() => {
         setSubmitting(false);
@@ -847,7 +865,9 @@ function UserSettingsSection() {
         <div className="flex items-center justify-between mt-2">
           <div className="space-y-1">
             <h3 className="text-sm font-semibold">用户管理</h3>
-            <p className="text-sm text-muted-foreground">管理可登录 Panel 的用户账户</p>
+            <p className="text-sm text-muted-foreground">
+              管理可登录 Panel 的用户账户；用户名与密码的修改仅限 admin 角色
+            </p>
           </div>
           {isAdmin && (
             <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
@@ -877,31 +897,33 @@ function UserSettingsSection() {
                   <TableRow key={user.id}>
                     <TableCell className="font-medium">{user.username}</TableCell>
                     <TableCell className="font-medium">
-                      {user.role}
+                      {user.role === 'admin' ? '管理员' : '用户'}
                     </TableCell>
                     {isAdmin && (
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {user.profiles?.map((p) => (
-                            <span key={p} className="text-sm">{p}</span>
+                            <span key={p} className="text-sm">{p === '*' ? '全部' : p}</span>
                           )) ?? '—'}
                         </div>
                       </TableCell>
                     )}
                     <TableCell>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedUser(user);
-                            setPasswordDialogOpen(true);
-                          }}
-                        >
-                          <Key className="mr-1 h-3 w-3" />
-                          修改密码
-                        </Button>
-                        {isAdmin && (
+                      {isAdmin ? (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedUser(user);
+                              setEditUsername(user.username);
+                              setEditPassword('');
+                              setEditDialogOpen(true);
+                            }}
+                          >
+                            <PenLine className="mr-1 h-3 w-3" />
+                            修改
+                          </Button>
                           <Button
                             variant="outline"
                             size="sm"
@@ -914,8 +936,10 @@ function UserSettingsSection() {
                             <Trash2 className="mr-1 h-3 w-3" />
                             删除
                           </Button>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
@@ -966,8 +990,8 @@ function UserSettingsSection() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="user">user</SelectItem>
-                    <SelectItem value="admin">admin</SelectItem>
+                    <SelectItem value="user">用户</SelectItem>
+                    <SelectItem value="admin">管理员</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -983,29 +1007,40 @@ function UserSettingsSection() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen}>
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>修改密码</DialogTitle>
-              <DialogDescription>为 {selectedUser?.username} 设置新密码</DialogDescription>
+              <DialogTitle>修改用户</DialogTitle>
+              <DialogDescription>
+                修改 {selectedUser?.username} 的用户名或密码；密码留空则保持不变
+              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="new-password">新密码</Label>
+                <Label htmlFor="edit-username">用户名</Label>
                 <Input
-                  id="new-password"
+                  id="edit-username"
+                  placeholder="输入用户名"
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-password">新密码</Label>
+                <Input
+                  id="edit-password"
                   type="password"
-                  placeholder="输入新密码"
-                  value={newPasswordValue}
-                  onChange={(e) => setNewPasswordValue(e.target.value)}
+                  placeholder="输入新密码（留空则不修改）"
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
                 />
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setPasswordDialogOpen(false)}>
+              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
                 取消
               </Button>
-              <Button onClick={handleChangePassword} disabled={submitting}>
+              <Button onClick={handleUpdateUser} disabled={submitting}>
                 {submitting ? '修改中...' : '确认修改'}
               </Button>
             </DialogFooter>

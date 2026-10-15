@@ -1,5 +1,7 @@
 # Hermes Panel 配置示例（仅作参考，程序不会自动复制本文件）。
-# 程序实际读取当前目录的 config.yaml，缺失时自动生成最小化配置。
+# 程序实际读取数据目录下的 config.yaml（默认 ./data/config.yaml，
+# 可用 HERMES_PANEL_DATA_DIR 指定数据目录；Docker 中为 /app/data/config.yaml），
+# 缺失时自动生成最小化配置。
 
 # Hermes 数据目录。Docker 下由 compose 挂载宿主机 ~/.hermes 到容器 /root/.hermes。
 hermes_path: ~/.hermes
@@ -13,3 +15,9 @@ port: 8090
 
 # Panel 自身数据目录（JSON 数据 / 日志 / 账号），默认 ./data。
 # data_dir: ./data
+
+# 初始管理员凭据，仅在首次启动（users.json 为空）播种时生效；
+# Docker 部署推荐通过 .env 的 HERMES_PANEL_ADMIN_USERNAME /
+# HERMES_PANEL_ADMIN_PASSWORD 注入（优先级高于此处）。
+# default_admin_username: admin
+# default_admin_password: admin

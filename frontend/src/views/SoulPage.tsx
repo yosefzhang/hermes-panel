@@ -89,8 +89,7 @@ export default function SoulPage() {
             <Textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              rows={24}
-              className="font-mono text-sm"
+              className="font-mono text-sm w-full h-[calc(100vh-260px)] min-h-[400px] resize-none"
               placeholder="在此输入 SOUL.md 内容…"
             />
           ) : (

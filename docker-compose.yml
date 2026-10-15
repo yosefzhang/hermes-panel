@@ -5,15 +5,18 @@ services:
       dockerfile: Dockerfile
     image: hermes-panel:latest
     container_name: hermes-panel
+    network_mode: bridge
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "0.0.0.0:9082:8090"
     environment:
       TZ: Asia/Shanghai
+    env_file:
+      - .env
     volumes:
-      # 配置文件（容器工作目录为 /app，程序读取 /app/config.yaml）
-      - ./config.yaml:/app/config.yaml
       # Hermes 数据目录（hermes_path，默认 ~/.hermes；容器内 root 用户即 /root/.hermes）
-      - ~/.hermes:/root/.hermes
-      # 面板自身的持久化数据（JSON 数据 / 日志 / 账号 / provider 注册表；容器内 /app/data）
+      - /vol1/1000/app/hermes:/root/.hermes
+      # 面板自身的持久化数据（config.yaml / JSON 数据 / 日志 / 账号 / provider 注册表；
+      # 容器内 /app/data）。config.yaml 也在此目录下（/app/data/config.yaml），
+      # 首次启动自动生成，无需单独挂载文件。
       - ./data:/app/data

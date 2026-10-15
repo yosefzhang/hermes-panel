@@ -292,7 +292,7 @@ def init_storage(settings: Settings) -> None:
             [
                 {
                     "id": 1,
-                    "username": "admin",
+                    "username": settings.default_admin_username,
                     "password_hash": hash_password(settings.default_admin_password),
                     "role": "admin",
                     "profiles": ["*"],

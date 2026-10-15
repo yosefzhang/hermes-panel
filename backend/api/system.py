@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from backend import __version__
 from backend.auth import get_current_user, require_admin
 from backend.config import Settings, update_config_file
 from backend.services.system import (
@@ -33,7 +34,7 @@ system_router = APIRouter(prefix="/system", tags=["system"])
 
 @system_router.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": __version__}
 
 
 # ── /audit-logs ─────────────────────────────────────────────────────────────

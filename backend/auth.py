@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field
 from backend.config import Settings
 from backend.store import JsonStore, User, hash_password, next_id, verify_password
 
-# 种子管理员账号不可删除，否则全新安装可能把自己锁在系统外。
-DEFAULT_ADMIN_USERNAME = "admin"
+# 种子管理员账号（settings.default_admin_username，默认 admin）不可删除，
+# 否则全新安装可能把自己锁在系统外。
 
 
 # ── 请求模型 ────────────────────────────────────────────────────────────────
@@ -37,6 +37,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    username: str | None = None
     password: str | None = None
     role: str | None = Field(default=None, pattern="^(admin|user)$")
     profiles: list[str] | None = None
@@ -140,10 +141,20 @@ class AuthService:
         if role == "admin":
             profiles = ["*"]
         password_hash = hash_password(payload.password) if payload.password else None
+        new_username = payload.username.strip() if payload.username is not None else None
+        if new_username == "":
+            raise ValueError("username cannot be empty")
 
         def _do_update(items: list[dict]) -> None:
+            if new_username is not None and any(
+                item["username"] == new_username and int(item["id"]) != user_id
+                for item in items
+            ):
+                raise ValueError("username already exists")
             for item in items:
                 if int(item["id"]) == user_id:
+                    if new_username is not None:
+                        item["username"] = new_username
                     item["role"] = role
                     item["profiles"] = profiles
                     item["updated_at"] = time.time()
@@ -160,7 +171,7 @@ class AuthService:
         def _do_delete(items: list[dict]) -> None:
             nonlocal deleted
             for idx, item in enumerate(items):
-                if int(item["id"]) == user_id and item["username"] != DEFAULT_ADMIN_USERNAME:
+                if int(item["id"]) == user_id and item["username"] != self.settings.default_admin_username:
                     del items[idx]
                     deleted = True
                     return

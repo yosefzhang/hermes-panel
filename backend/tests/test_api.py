@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.config import Settings
+from backend.config import Settings, _build_settings_from_file
 from backend.main import create_app
 
 
@@ -43,6 +43,51 @@ def test_default_admin_can_login_and_read_config(tmp_path: Path):
 
     assert response.status_code == 200
     assert response.json()["model"]["api_key"] == "sk-secret-value"
+
+
+def test_env_overrides_default_admin_credentials(monkeypatch):
+    """HERMES_PANEL_ADMIN_USERNAME/PASSWORD 环境变量优先于 YAML 与默认值。"""
+    monkeypatch.setenv("HERMES_PANEL_ADMIN_USERNAME", "root")
+    monkeypatch.setenv("HERMES_PANEL_ADMIN_PASSWORD", "env-secret")
+
+    settings = _build_settings_from_file({})
+
+    assert settings.default_admin_username == "root"
+    assert settings.default_admin_password == "env-secret"
+
+
+def test_yaml_admin_credentials_used_when_env_absent(monkeypatch):
+    """环境变量未设置时回退到 config.yaml 中的值。"""
+    monkeypatch.delenv("HERMES_PANEL_ADMIN_USERNAME", raising=False)
+    monkeypatch.delenv("HERMES_PANEL_ADMIN_PASSWORD", raising=False)
+
+    settings = _build_settings_from_file(
+        {"default_admin_username": "ops", "default_admin_password": "yaml-secret"}
+    )
+
+    assert settings.default_admin_username == "ops"
+    assert settings.default_admin_password == "yaml-secret"
+
+
+def test_custom_admin_credentials_seed_admin_user(tmp_path: Path):
+    """首次播种使用 settings 中的自定义用户名/密码，而非默认 admin/admin。"""
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    settings = Settings(
+        hermes_home=hermes_home,
+        data_dir=tmp_path / "data",
+        log_file_path=tmp_path / "hermes-panel.log",
+        default_admin_username="root",
+        default_admin_password="custom-secret",
+        jwt_secret="test-secret-for-hermes-panel-tests-min-32-bytes",
+    )
+    client = TestClient(create_app(settings))
+
+    ok = client.post("/api/v1/auth/login", json={"username": "root", "password": "custom-secret"})
+    fallback = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"})
+
+    assert ok.status_code == 200
+    assert fallback.status_code == 401
 
 
 def test_sync_status_uses_forwarded_https_url(tmp_path: Path):
@@ -113,6 +158,84 @@ def test_non_admin_user_is_limited_to_assigned_profiles(tmp_path: Path):
         headers={"Authorization": f"Bearer {alice_token}"},
     )
     assert denied.status_code == 403
+
+
+def test_admin_can_rename_user(tmp_path: Path):
+    """admin 通过 PUT /users/{id} 修改用户名，修改后用新用户名可登录。"""
+    client = make_client(tmp_path)
+    token = login(client)
+
+    create_response = client.post(
+        "/api/v1/users",
+        json={"username": "alice", "password": "secret", "role": "user", "profiles": ["default"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 201
+    user_id = create_response.json()["id"]
+
+    update = client.put(
+        f"/api/v1/users/{user_id}",
+        json={"username": "alice2"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert update.status_code == 200
+    assert update.json()["username"] == "alice2"
+
+    new_login = client.post("/api/v1/auth/login", json={"username": "alice2", "password": "secret"})
+    assert new_login.status_code == 200
+    old_login = client.post("/api/v1/auth/login", json={"username": "alice", "password": "secret"})
+    assert old_login.status_code == 401
+
+
+def test_rename_to_existing_username_conflicts(tmp_path: Path):
+    client = make_client(tmp_path)
+    token = login(client)
+
+    create = client.post(
+        "/api/v1/users",
+        json={"username": "alice", "password": "secret", "role": "user", "profiles": ["default"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create.status_code == 201
+    user_id = create.json()["id"]
+
+    conflict = client.put(
+        f"/api/v1/users/{user_id}",
+        json={"username": "admin"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert conflict.status_code == 409
+
+
+def test_non_admin_cannot_change_password_or_username(tmp_path: Path):
+    """仅 admin 可修改用户名/密码；普通用户改自己的密码也返回 403。"""
+    client = make_client(tmp_path)
+    token = login(client)
+
+    create = client.post(
+        "/api/v1/users",
+        json={"username": "alice", "password": "secret", "role": "user", "profiles": ["default"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create.status_code == 201
+    user_id = create.json()["id"]
+
+    alice_login = client.post("/api/v1/auth/login", json={"username": "alice", "password": "secret"})
+    alice_token = alice_login.json()["access_token"]
+
+    change_password = client.put(
+        f"/api/v1/users/{user_id}/password",
+        json={"new_password": "new-secret"},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+    assert change_password.status_code == 403
+
+    rename = client.put(
+        f"/api/v1/users/{user_id}",
+        json={"username": "alice2"},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+    assert rename.status_code == 403
 
 
 def test_update_provider_writes_key_to_env_and_preserves_models(tmp_path: Path):

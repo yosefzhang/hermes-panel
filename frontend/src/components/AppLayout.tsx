@@ -20,6 +20,7 @@ import {
 import { useAuthStore } from '../store/authStore';
 import { useConfigStore } from '../store/configStore';
 import { profileCategories } from '../config/profileCategories';
+import { apiClient } from '../api/client';
 
 interface HeaderContextValue {
   setExtra: (node: React.ReactNode) => void;
@@ -83,10 +84,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [expandedProfiles, setExpandedProfiles] = useState<Set<string>>(new Set());
   const [headerExtra, setHeaderExtra] = useState<React.ReactNode>(null);
   const [headerDescription, setHeaderDescription] = useState<string | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     loadProfiles().catch(() => undefined);
   }, [loadProfiles]);
+
+  useEffect(() => {
+    apiClient
+      .get<{ status: string; version?: string }>('/system/health')
+      .then((res) => setVersion(res.data.version ?? null))
+      .catch(() => undefined);
+  }, []);
 
   const isGlobalActive = (path: string) => pathname === path;
   const pathMatch = pathname.match(/^\/([^/]+)\/([^/]+)/);
@@ -120,7 +129,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center text-white shadow-soft">
           <Command className="h-5 w-5" />
         </div>
-        <span className="font-bold text-lg tracking-tight text-foreground">Hermes Panel</span>
+        <div className="min-w-0">
+          <div className="font-bold text-lg tracking-tight text-foreground leading-tight">Hermes Panel</div>
+          {version && <div className="text-[10px] text-muted-foreground">v{version}</div>}
+        </div>
       </div>
 
       <div className="px-5 py-3">
@@ -235,11 +247,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               logout();
               router.push('/login');
             }}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-            title="退出登录"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
             aria-label="退出登录"
           >
-            <LogOut className="h-4 w-4" />
+            <LogOut className="h-3.5 w-3.5" />
+            退出登录
           </button>
         </div>
       </div>

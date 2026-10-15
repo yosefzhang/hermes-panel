@@ -9,12 +9,11 @@ from ruamel.yaml import YAML
 
 
 def _default_config_dir() -> Path:
-    """Panel 自身数据根目录（JSON 数据、日志都放在这里）。
+    """Panel 自身数据根目录（config.yaml、JSON 数据、日志都放在这里）。
 
     默认 ``./data``（相对当前工作目录；Docker 中即 /app/data，由
     docker-compose 挂载宿主机 ./data 持久化）。可用 ``HERMES_PANEL_DATA_DIR``
-    覆盖为绝对路径（如 ``~/.config/hermes-panel``）。config.yaml 不在此目录，
-    默认位于当前工作目录（见 ``_config_path()``）。
+    覆盖为绝对路径（如 ``~/.config/hermes-panel``）。
     """
     env = os.environ.get("HERMES_PANEL_DATA_DIR")
     if env:
@@ -33,13 +32,17 @@ port: 8090
 
 
 def _config_path() -> Path:
-    """返回面板 config.yaml 的路径，即当前工作目录下的 ./config.yaml。"""
-    return Path.cwd() / "config.yaml"
+    """返回面板 config.yaml 的路径，位于面板数据目录下（见 ``_default_config_dir``）。
+
+    Docker 中即容器内 /app/data/config.yaml，随宿主机 ./data 目录持久化；
+    与挂载文件不同，目录挂载不会触发 Docker 自动创建同名目录的问题。
+    """
+    return CONFIG_DIR / "config.yaml"
 
 
 def _ensure_config_file(path: Path) -> None:
     """config.yaml 不存在时，生成一个最小化的初始配置。"""
-    if path.is_file():
+    if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_MINIMAL_CONFIG, encoding="utf-8")
@@ -100,7 +103,14 @@ class Settings(BaseModel):
     )
     jwt_algorithm: str = "HS256"
     jwt_expires_hours: int = 24
+    # 初始管理员凭据，仅在首次启动播种 users.json 时使用。
+    # 密码可通过环境变量 HERMES_PANEL_ADMIN_PASSWORD 覆盖（Docker 部署推荐
+    # 用 .env 注入，避免凭据写进挂载的 config.yaml）。
     default_admin_password: str = Field(
+        default="admin"
+    )
+    # 用户名同理，可通过环境变量 HERMES_PANEL_ADMIN_USERNAME 覆盖。
+    default_admin_username: str = Field(
         default="admin"
     )
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8650"]
@@ -128,6 +138,19 @@ def _build_settings_from_file(data: dict) -> Settings:
     sync = data.get("sync", {}) or {}
     send_sync = sync.get("send", {}) or {}
     receive_sync = sync.get("receive", {}) or {}
+
+    # 初始管理员凭据支持环境变量覆盖（仅此两项，其余配置仍只从 YAML 读取）：
+    # 部署时凭据走 .env / 环境变量，不必写入挂载的 config.yaml。
+    admin_username = (
+        os.environ.get("HERMES_PANEL_ADMIN_USERNAME")
+        or data.get("default_admin_username")
+        or "admin"
+    )
+    admin_password = (
+        os.environ.get("HERMES_PANEL_ADMIN_PASSWORD")
+        or data.get("default_admin_password")
+        or "admin"
+    )
     return Settings(
         port=int(data.get("port", 8090)),
         panel_name=data.get("panel_name"),
@@ -136,7 +159,8 @@ def _build_settings_from_file(data: dict) -> Settings:
         log_file_path=Path(data.get("log_file") or (CONFIG_DIR / "hermes-panel.log")).expanduser(),
         log_level=str(data.get("log_level", "INFO")).upper(),
         jwt_secret=data.get("jwt_secret") or "change-me-in-production-hermes-panel-secret-key",
-        default_admin_password=data.get("default_admin_password") or "admin",
+        default_admin_username=admin_username,
+        default_admin_password=admin_password,
         sync_enabled=bool(send_sync.get("enabled", False)),
         sync_receive_enabled=bool(receive_sync.get("enabled", False)),
         sync_target_url=send_sync.get("endpoint"),

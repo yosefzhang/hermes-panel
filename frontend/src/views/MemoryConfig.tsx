@@ -112,8 +112,7 @@ export default function MemoryConfig() {
                         prev ? { ...prev, memories: { ...prev.memories, MEMORY: e.target.value } } : prev,
                       )
                     }
-                    rows={18}
-                    className="font-mono text-sm"
+                    className="font-mono text-sm w-full h-[calc(100vh-320px)] min-h-[360px] resize-none"
                   />
                 ) : (
                   <div className="whitespace-pre-wrap font-mono text-sm p-4 rounded-md bg-muted/50 min-h-[300px]">
@@ -154,8 +153,7 @@ export default function MemoryConfig() {
                         prev ? { ...prev, memories: { ...prev.memories, USER: e.target.value } } : prev,
                       )
                     }
-                    rows={18}
-                    className="font-mono text-sm"
+                    className="font-mono text-sm w-full h-[calc(100vh-320px)] min-h-[360px] resize-none"
                   />
                 ) : (
                   <div className="whitespace-pre-wrap font-mono text-sm p-4 rounded-md bg-muted/50 min-h-[300px]">

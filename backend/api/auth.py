@@ -87,7 +87,11 @@ def update_user(
     _: User = Depends(require_admin),
     auth_service: AuthService = Depends(get_auth_service),
 ):
-    user = auth_service.update_user(user_id, payload)
+    """修改用户信息（含用户名、密码、角色、profiles），仅 admin 有权限。"""
+    try:
+        user = auth_service.update_user(user_id, payload)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -108,13 +112,10 @@ def delete_user(
 def change_password(
     user_id: int,
     payload: PasswordChange,
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(require_admin),
     auth_service: AuthService = Depends(get_auth_service),
 ):
-    """修改密码：admin 可以修改任何用户的密码，普通用户只能修改自己的密码"""
-    if current_user.role != "admin" and current_user.id != user_id:
-        raise HTTPException(status_code=403, detail="Permission denied")
-
+    """修改密码：仅 admin 角色的账号可修改（自己或其他用户）。"""
     if not payload.new_password or len(payload.new_password) < 3:
         raise HTTPException(status_code=400, detail="Password must be at least 3 characters")
 
